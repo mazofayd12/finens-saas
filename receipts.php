@@ -364,9 +364,14 @@ require_once __DIR__ . '/includes/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap text-center">
-                                    <a href="receipt_print.php?id=<?= $rec['id'] ?>" target="_blank" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-xs">
-                                        <i class="fa-solid fa-print ml-1.5"></i> طباعة (3 بوصول الورقة)
-                                    </a>
+                                    <div class="flex items-center justify-center space-x-1.5 space-x-reverse">
+                                        <a href="receipt_print.php?id=<?= $rec['id'] ?>" target="_blank" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-xs" title="طباعة 3 وصولات في ورقة A4">
+                                            <i class="fa-solid fa-print ml-1.5"></i> طباعة A4
+                                        </a>
+                                        <a href="<?= htmlspecialchars(getReceiptPublicUrl($rec)) ?>" target="_blank" class="inline-flex items-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-2.5 py-1.5 rounded-xl text-xs transition" title="عرض الفاتورة الإلكترونية عبر QR والرابط المباشر">
+                                            <i class="fa-solid fa-qrcode ml-1 text-xs"></i> أونلاين
+                                        </a>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

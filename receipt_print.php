@@ -31,6 +31,7 @@ if (!$receipt) {
 $autoPrint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 
 $receiptCurrency = !empty($receipt['currency']) ? $receipt['currency'] : ($currentUser['currency'] ?? 'ج.م');
+$receiptPublicUrl = getReceiptPublicUrl($receipt);
 
 // 3 Voucher copy titles
 $copies = [
@@ -156,6 +157,10 @@ $copies = [
             </div>
 
             <div class="flex items-center space-x-2 space-x-reverse">
+                <a href="<?= htmlspecialchars($receiptPublicUrl) ?>" target="_blank" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-3 py-2 rounded-xl text-xs transition flex items-center">
+                    <i class="fa-solid fa-arrow-up-right-from-square ml-1.5 text-xs"></i>
+                    فتح الفاتورة أونلاين
+                </a>
                 <button onclick="window.print()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl shadow-md transition text-xs flex items-center">
                     <i class="fa-solid fa-print ml-2 text-sm"></i>
                     طباعة الورقة الآن (Print A4)
@@ -277,18 +282,21 @@ $copies = [
                         <span class="text-slate-400 block text-[9px] mt-2">التوقيع: ....................</span>
                     </div>
 
-                    <!-- Accountant / Auditor -->
+                    <!-- Accountant / Auditor / Stamp -->
                     <div class="border-l border-slate-200 pl-1">
-                        <span class="text-slate-500 font-bold block text-[10px]">الحسابات / الخزينة</span>
-                        <div class="h-4"></div>
-                        <span class="text-slate-400 block text-[9px] mt-2">الاعتماد: ....................</span>
+                        <span class="text-slate-500 font-bold block text-[10px]">اعتماد الحسابات / الخاتم</span>
+                        <div class="h-3.5"></div>
+                        <span class="text-slate-400 block text-[9px] mt-1.5">الاعتماد: ....................</span>
                     </div>
 
-                    <!-- Stamp box -->
+                    <!-- QR Code Electronic Verification -->
                     <div class="flex flex-col items-center justify-center">
-                        <div class="w-20 h-9 border border-dashed border-slate-400 rounded flex items-center justify-center text-[9px] text-slate-400">
-                            خاتم المقر الرسمي
+                        <div class="qr-code-box w-12 h-12 flex items-center justify-center bg-white border border-slate-300 rounded p-0.5" id="qr-code-slip-<?= $idx ?>">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=<?= urlencode($receiptPublicUrl) ?>" alt="QR" class="w-11 h-11 object-contain qr-img">
                         </div>
+                        <span class="text-slate-600 font-black block text-[8px] mt-0.5 leading-tight tracking-tighter">
+                            <i class="fa-solid fa-qrcode text-indigo-600 ml-0.5"></i> امسح للفاتورة أونلاين
+                        </span>
                     </div>
                 </div>
             </div>
@@ -303,6 +311,27 @@ $copies = [
             <?php endif; ?>
         <?php endforeach; ?>
     </div>
+
+    <!-- QR Code Script -->
+    <script src="assets/js/qrcode.min.js"></script>
+    <script>
+        const targetUrl = "<?= $receiptPublicUrl ?>";
+        try {
+            document.querySelectorAll('.qr-code-box').forEach((box) => {
+                box.innerHTML = '';
+                new QRCode(box, {
+                    text: targetUrl,
+                    width: 44,
+                    height: 44,
+                    colorDark: "#000000",
+                    colorLight: "#ffffff",
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            });
+        } catch (e) {
+            console.log('Using fallback QR image');
+        }
+    </script>
 
     <?php if ($autoPrint): ?>
     <script>

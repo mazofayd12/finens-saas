@@ -281,3 +281,41 @@ function generateNextReceiptNumber(int $companyId): string {
     $recNum = 1000 + $nextId;
     return 'REC-' . $recNum;
 }
+
+/**
+ * Generates verification token for a receipt
+ */
+function getReceiptVerificationToken(array|int|string $receiptOrId): string {
+    $val = is_array($receiptOrId) ? ($receiptOrId['receipt_number'] ?? $receiptOrId['id']) : $receiptOrId;
+    return substr(hash('sha256', "rec_{$val}_finens_secure_token"), 0, 12);
+}
+
+/**
+ * Returns public URL for viewing / verifying a receipt online
+ */
+function getReceiptPublicUrl(array|int|string $receipt): string {
+    $baseUrl = getAppBaseUrl();
+    if (is_array($receipt)) {
+        $num = $receipt['receipt_number'] ?? ('REC-' . $receipt['id']);
+        $token = getReceiptVerificationToken($receipt);
+    } else {
+        $num = is_numeric($receipt) ? ('REC-' . $receipt) : $receipt;
+        $token = getReceiptVerificationToken($receipt);
+    }
+    return $baseUrl . '/view_receipt.php?num=' . urlencode($num) . '&token=' . $token;
+}
+
+/**
+ * Returns base URL of current app instance
+ */
+function getAppBaseUrl(): string {
+    if (!empty($_SERVER['HTTP_HOST'])) {
+        $isHttps = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') 
+                   || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443)
+                   || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https');
+        $scheme = $isHttps ? 'https' : 'http';
+        return $scheme . '://' . $_SERVER['HTTP_HOST'];
+    }
+    // Fallback production domain
+    return 'https://darkorange-reindeer-228322.hostingersite.com';
+}
