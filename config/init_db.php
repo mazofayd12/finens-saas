@@ -61,6 +61,7 @@ function ensureDatabaseTablesExist(): void {
             type VARCHAR(20) NOT NULL, -- 'deposit', 'expense', 'salary', 'initial'
             category VARCHAR(150) NOT NULL,
             amount DECIMAL(15, 2) NOT NULL,
+            currency VARCHAR(20) DEFAULT 'ج.م',
             balance_before DECIMAL(15, 2) NOT NULL,
             balance_after DECIMAL(15, 2) NOT NULL,
             description TEXT NULL,
@@ -95,6 +96,7 @@ function ensureDatabaseTablesExist(): void {
             safe_transaction_id INTEGER NULL,
             user_id INTEGER NOT NULL,
             amount DECIMAL(15, 2) NOT NULL,
+            currency VARCHAR(20) DEFAULT 'ج.م',
             title VARCHAR(255) NOT NULL,
             description TEXT NULL,
             expense_date DATE NOT NULL,
@@ -159,6 +161,7 @@ function ensureDatabaseTablesExist(): void {
             customer_name VARCHAR(255) NOT NULL,
             customer_phone VARCHAR(50) NULL,
             amount DECIMAL(15, 2) NOT NULL,
+            currency VARCHAR(20) DEFAULT 'ج.م',
             amount_words VARCHAR(255) NULL,
             payment_method VARCHAR(50) DEFAULT 'نقداً كاش',
             purpose TEXT NOT NULL,
@@ -180,6 +183,28 @@ function ensureDatabaseTablesExist(): void {
     } catch (Exception $e) {
         // In case of MySQL or if already added
     }
+
+    // Auto-migrate: add currency column to receipts, safe_transactions, expenses if missing
+    try {
+        $recCols = $db->query("PRAGMA table_info(receipts)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('currency', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م';");
+        }
+    } catch (Exception $e) {}
+
+    try {
+        $stCols = $db->query("PRAGMA table_info(safe_transactions)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('currency', $stCols)) {
+            $db->exec("ALTER TABLE safe_transactions ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م';");
+        }
+    } catch (Exception $e) {}
+
+    try {
+        $expCols = $db->query("PRAGMA table_info(expenses)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('currency', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م';");
+        }
+    } catch (Exception $e) {}
 
     // Seed data if no users exist
     $checkUser = $db->query("SELECT COUNT(*) as cnt FROM users")->fetch();

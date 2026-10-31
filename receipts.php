@@ -63,6 +63,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $customerName = trim($_POST['customer_name'] ?? '');
     $customerPhone = trim($_POST['customer_phone'] ?? '');
     $amount = (float)($_POST['amount'] ?? 0);
+    $recCurrency = trim($_POST['currency'] ?? $currency);
     $paymentMethod = trim($_POST['payment_method'] ?? 'نقداً كاش');
     $purpose = trim($_POST['purpose'] ?? '');
     $notes = trim($_POST['notes'] ?? '');
@@ -72,7 +73,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     if (empty($customerName) || $amount <= 0 || empty($purpose)) {
         setFlash('error', 'يرجى إدخال اسم العميل، المبلغ، وبيان وسبب الاستلام.');
     } else {
-        $amountWords = tafqeetNumber($amount, $currency === 'ج.م' ? 'جنيه مصري' : $currency);
+        $amountWords = tafqeetNumber($amount, $recCurrency);
         $receiptNumber = generateNextReceiptNumber($activeCompanyId);
 
         $db->beginTransaction();
@@ -81,6 +82,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
             // Automatically deposit into treasury if checked
             if ($depositToSafe && hasModule('treasury')) {
+                $txDesc = "إيصال استلام رقم {$receiptNumber} من العميل: {$customerName}";
+                if ($recCurrency !== $currency) {
+                    $txDesc .= " (المبلغ: " . formatMoney($amount, $recCurrency) . ")";
+                }
+                $txDesc .= " - بيان: {$purpose}";
+
                 $txResult = recordSafeTransaction(
                     $activeCompanyId,
                     $safe['id'],
@@ -88,8 +95,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     'deposit',
                     'تحصيل نقدية وإيصال قبض',
                     $amount,
-                    "إيصال استلام رقم {$receiptNumber} من العميل: {$customerName} - بيان: {$purpose}",
-                    $receiptDate
+                    $txDesc,
+                    $receiptDate,
+                    $recCurrency
                 );
                 $safeTxId = $txResult['transaction_id'];
             }
@@ -98,11 +106,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $insRec = $db->prepare("
                 INSERT INTO receipts (
                     receipt_number, company_id, user_id, safe_transaction_id,
-                    customer_name, customer_phone, amount, amount_words, payment_method,
+                    customer_name, customer_phone, amount, currency, amount_words, payment_method,
                     purpose, receipt_date, notes, created_at
                 ) VALUES (
                     :rnum, :cid, :uid, :txid,
-                    :cname, :cphone, :amt, :awords, :pmethod,
+                    :cname, :cphone, :amt, :curr, :awords, :pmethod,
                     :purp, :rdate, :notes, :now
                 )
             ");
@@ -114,6 +122,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 ':cname' => $customerName,
                 ':cphone' => $customerPhone,
                 ':amt' => $amount,
+                ':curr' => $recCurrency,
                 ':awords' => $amountWords,
                 ':pmethod' => $paymentMethod,
                 ':purp' => $purpose,
@@ -325,7 +334,7 @@ require_once __DIR__ . '/includes/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap font-black text-emerald-600 text-sm">
-                                    <?= formatMoney($rec['amount'], $currency) ?>
+                                    <?= formatMoney($rec['amount'], $rec['currency'] ?? $currency) ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap">
                                     <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700">
@@ -400,14 +409,29 @@ require_once __DIR__ . '/includes/header.php';
                 <span class="text-[11px] text-slate-400 font-mono">الرقم المتوقع: <?= generateNextReceiptNumber($activeCompanyId) ?></span>
             </div>
 
-            <!-- Amount Input -->
+            <!-- Amount & Currency Input -->
             <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المستلم (<?= $currency ?>) <span class="text-red-500">*</span></label>
-                <div class="relative">
-                    <input type="number" step="0.01" min="0.01" id="rec_amount" name="amount" required placeholder="500.00" oninput="previewAmountWords(this.value)" class="w-full text-2xl font-black bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                    <span class="absolute left-3 top-3.5 text-xs text-slate-400 font-bold"><?= $currency ?></span>
+                <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المستلم والعملة <span class="text-red-500">*</span></label>
+                <div class="flex gap-2">
+                    <div class="relative flex-1">
+                        <input type="number" step="0.01" min="0.01" id="rec_amount" name="amount" required placeholder="500.00" oninput="previewAmountWords()" class="w-full text-2xl font-black bg-slate-50 border border-slate-300 rounded-xl px-4 py-2 text-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                    </div>
+                    <div class="w-40 shrink-0">
+                        <select id="rec_currency" name="currency" onchange="previewAmountWords()" class="w-full h-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                            <option value="ج.م" <?= $currency === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه مصري)</option>
+                            <option value="$" <?= $currency === '$' ? 'selected' : '' ?>>$ (دولار أمريكي)</option>
+                            <option value="ر.س" <?= $currency === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال سعودي)</option>
+                            <option value="€" <?= $currency === '€' ? 'selected' : '' ?>>€ (يورو)</option>
+                            <option value="د.إ" <?= $currency === 'د.إ' ? 'selected' : '' ?>>د.إ (درهم إماراتي)</option>
+                            <option value="د.ك" <?= $currency === 'د.ك' ? 'selected' : '' ?>>د.ك (دينار كويتي)</option>
+                        </select>
+                    </div>
                 </div>
-                <p id="rec_words_preview" class="text-xs text-emerald-700 font-bold mt-1.5"></p>
+                <div class="mt-2 p-2.5 bg-emerald-50/70 border border-emerald-200/60 rounded-xl flex items-center space-x-2 space-x-reverse text-xs">
+                    <i class="fa-solid fa-spell-check text-emerald-600"></i>
+                    <span class="text-slate-500 font-bold">التفقيط:</span>
+                    <span id="rec_words_preview" class="text-emerald-800 font-black">أدخل المبلغ لعرض التفقيط</span>
+                </div>
             </div>
 
             <!-- Customer Name & Phone -->
@@ -511,14 +535,110 @@ require_once __DIR__ . '/includes/header.php';
 </div>
 
 <script>
-function previewAmountWords(val) {
+function tafqeetJS(num, currency) {
+    num = parseFloat(num);
+    if (isNaN(num) || num <= 0) return '';
+
+    const parts = num.toFixed(2).split('.');
+    const intPart = parseInt(parts[0], 10);
+    const fraction = parseInt(parts[1], 10);
+
+    let mainUnit = 'جنيه مصري';
+    let subUnit = 'قرشاً';
+
+    if (currency === '$' || currency === 'USD') {
+        mainUnit = 'دولار أمريكي';
+        subUnit = 'سنتاً';
+    } else if (currency === 'ر.س' || currency === 'SAR') {
+        mainUnit = 'ريال سعودي';
+        subUnit = 'هللة';
+    } else if (currency === '€' || currency === 'EUR') {
+        mainUnit = 'يورو';
+        subUnit = 'سنتاً';
+    } else if (currency === 'د.إ' || currency === 'AED') {
+        mainUnit = 'درهم إماراتي';
+        subUnit = 'فلساً';
+    } else if (currency === 'د.ك' || currency === 'KWD') {
+        mainUnit = 'دينار كويتي';
+        subUnit = 'فلساً';
+    }
+
+    const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة",
+        "أحد عشر", "اثنا عشر", "ثلاثة عشر", "أربعة عشر", "خمسة عشر", "ستة عشر", "سبعة عشر", "ثمانية عشر", "تسعة عشر"];
+    const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+    const hundreds = ["", "مائة", "مائتان", "ثلاثمائة", "أربعمائة", "خمسمائة", "ستمائة", "سبعمائة", "ثمانمائة", "تسعمائة"];
+
+    function convert3Digits(n) {
+        let res = [];
+        let h = Math.floor(n / 100);
+        let rem = n % 100;
+        if (h > 0) res.push(hundreds[h]);
+        if (rem > 0) {
+            if (rem < 20) {
+                res.push(ones[rem]);
+            } else {
+                let unit = rem % 10;
+                let ten = Math.floor(rem / 10);
+                if (unit > 0) {
+                    res.push(ones[unit] + " و" + tens[ten]);
+                } else {
+                    res.push(tens[ten]);
+                }
+            }
+        }
+        return res.join(" و");
+    }
+
+    let text = "";
+    if (intPart === 0) {
+        text = "صفر";
+    } else {
+        let res = [];
+        let mil = Math.floor(intPart / 1000000);
+        let remMil = intPart % 1000000;
+        if (mil > 0) {
+            if (mil === 1) res.push("مليون");
+            else if (mil === 2) res.push("مليونان");
+            else if (mil >= 3 && mil <= 10) res.push(convert3Digits(mil) + " ملايين");
+            else res.push(convert3Digits(mil) + " مليون");
+        }
+        let th = Math.floor(remMil / 1000);
+        let remTh = remMil % 1000;
+        if (th > 0) {
+            if (th === 1) res.push("ألف");
+            else if (th === 2) res.push("ألفان");
+            else if (th >= 3 && th <= 10) res.push(convert3Digits(th) + " آلاف");
+            else res.push(convert3Digits(th) + " ألف");
+        }
+        if (remTh > 0) {
+            res.push(convert3Digits(remTh));
+        }
+        text = res.join(" و");
+    }
+
+    let out = "فقط " + text + " " + mainUnit;
+    if (fraction > 0) {
+        out += " و" + convert3Digits(fraction) + " " + subUnit;
+    }
+    out += " لا غير";
+    return out;
+}
+
+function previewAmountWords() {
+    const amtInput = document.getElementById('rec_amount');
+    const currInput = document.getElementById('rec_currency');
     const p = document.getElementById('rec_words_preview');
-    if (!val || parseFloat(val) <= 0) {
-        p.innerText = '';
+    if (!amtInput || !p) return;
+
+    const val = parseFloat(amtInput.value);
+    const curr = currInput ? currInput.value : 'ج.م';
+
+    if (isNaN(val) || val <= 0) {
+        p.innerText = 'أدخل المبلغ لعرض التفقيط';
         return;
     }
-    // Simple fast visual feedback
-    p.innerText = 'سيتم تفقيط المبلغ تلقائياً باللغة العربية على الوصل المطبوع.';
+
+    p.innerText = tafqeetJS(val, curr);
 }
 </script>
 

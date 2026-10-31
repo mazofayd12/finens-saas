@@ -19,6 +19,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'create_expense') {
         $amount = (float)($_POST['amount'] ?? 0);
+        $expCurrency = trim($_POST['currency'] ?? $currency);
         $categoryId = !empty($_POST['category_id']) ? (int)$_POST['category_id'] : null;
         $title = trim($_POST['title'] ?? '');
         $description = trim($_POST['description'] ?? '');
@@ -40,6 +41,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             try {
                 // 1. Deduct from safe atomically
+                $finalTitle = $title . ($description ? " - " . $description : "");
+                if ($expCurrency !== $currency && strpos($finalTitle, $expCurrency) === false) {
+                    $finalTitle .= " (العملة: " . $expCurrency . ")";
+                }
+
                 $txResult = recordSafeTransaction(
                     $activeCompanyId,
                     $safe['id'],
@@ -47,14 +53,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'expense',
                     $catName,
                     $amount,
-                    $title . ($description ? " - " . $description : ""),
-                    $expenseDate
+                    $finalTitle,
+                    $expenseDate,
+                    $expCurrency
                 );
 
                 // 2. Insert into expenses table
                 $insExp = $db->prepare("
-                    INSERT INTO expenses (company_id, category_id, safe_id, safe_transaction_id, user_id, amount, title, description, expense_date, created_at)
-                    VALUES (:cid, :catid, :sid, :txid, :uid, :amt, :title, :desc, :edate, :now)
+                    INSERT INTO expenses (company_id, category_id, safe_id, safe_transaction_id, user_id, amount, currency, title, description, expense_date, created_at)
+                    VALUES (:cid, :catid, :sid, :txid, :uid, :amt, :curr, :title, :desc, :edate, :now)
                 ");
                 $insExp->execute([
                     ':cid' => $activeCompanyId,
@@ -63,13 +70,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':txid' => $txResult['transaction_id'],
                     ':uid' => $currentUser['id'],
                     ':amt' => $amount,
+                    ':curr' => $expCurrency,
                     ':title' => $title,
                     ':desc' => $description,
                     ':edate' => $expenseDate,
                     ':now' => date('Y-m-d H:i:s')
                 ]);
 
-                setFlash('success', "تم تسجيل صرف مبلغ " . formatMoney($amount, $currency) . " وخصمه من الخزنة بنجاح!");
+                setFlash('success', "تم تسجيل صرف مبلغ " . formatMoney($amount, $expCurrency) . " وخصمه من الخزنة بنجاح!");
                 header('Location: expenses.php');
                 exit;
             } catch (Exception $e) {
@@ -266,13 +274,13 @@ require_once __DIR__ . '/includes/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap font-black text-rose-600 text-sm">
-                                    -<?= formatMoney($exp['amount'], $currency) ?>
+                                    -<?= formatMoney($exp['amount'], !empty($exp['currency']) ? $exp['currency'] : $currency) ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap text-slate-500">
                                     <?= htmlspecialchars($exp['user_name'] ?? 'مستخدم') ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap text-center no-print">
-                                    <button onclick='printVoucher(<?= json_encode($exp) ?>, "<?= htmlspecialchars($currentUser['company_name'] ?? 'الشركة') ?>", "<?= $currency ?>")' class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded-lg text-[11px] font-bold transition">
+                                    <button onclick='printVoucher(<?= json_encode($exp) ?>, "<?= htmlspecialchars($currentUser['company_name'] ?? 'الشركة') ?>", "<?= !empty($exp['currency']) ? $exp['currency'] : $currency ?>")' class="bg-slate-100 hover:bg-slate-200 text-slate-700 px-2 py-1 rounded-lg text-[11px] font-bold transition">
                                         <i class="fa-solid fa-receipt ml-1"></i> طباعة سند
                                     </button>
                                 </td>

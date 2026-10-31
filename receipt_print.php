@@ -30,6 +30,8 @@ if (!$receipt) {
 
 $autoPrint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
 
+$receiptCurrency = !empty($receipt['currency']) ? $receipt['currency'] : ($currentUser['currency'] ?? 'ج.م');
+
 // 3 Voucher copy titles
 $copies = [
     ['title' => 'أصل - نسخة العميل', 'color' => 'bg-emerald-50 text-emerald-800 border-emerald-300'],
@@ -220,7 +222,7 @@ $copies = [
                         <div class="flex items-center space-x-2 space-x-reverse">
                             <span class="font-extrabold text-slate-600 text-xs">المبلغ المستلم:</span>
                             <span class="font-black text-base text-emerald-700 font-mono tracking-tight">
-                                <?= formatMoney($receipt['amount'], $currency) ?>
+                                <?= formatMoney($receipt['amount'], $receiptCurrency) ?>
                             </span>
                         </div>
                         <div class="text-[11px] font-bold text-slate-700">

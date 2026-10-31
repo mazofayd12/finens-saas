@@ -20,6 +20,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     if ($action === 'deposit') {
         $amount = (float)($_POST['amount'] ?? 0);
+        $txCurrency = trim($_POST['currency'] ?? $currency);
         $category = trim($_POST['category'] ?? 'إيداع نقدي');
         $description = trim($_POST['description'] ?? '');
         $txDate = trim($_POST['transaction_date'] ?? date('Y-m-d'));
@@ -28,6 +29,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlash('error', 'يرجى إدخال مبلغ إيداع صحيح أكبر من صفر.');
         } else {
             try {
+                $finalDesc = $description;
+                if ($txCurrency !== $currency && strpos($description, $txCurrency) === false) {
+                    $finalDesc = ($description ? $description . " - " : "") . "العملة: " . $txCurrency;
+                }
+
                 recordSafeTransaction(
                     $activeCompanyId,
                     $safe['id'],
@@ -35,10 +41,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'deposit',
                     $category,
                     $amount,
-                    $description,
-                    $txDate
+                    $finalDesc,
+                    $txDate,
+                    $txCurrency
                 );
-                setFlash('success', "تم إيداع مبلغ " . formatMoney($amount, $currency) . " في الخزنة بنجاح!");
+                setFlash('success', "تم إيداع مبلغ " . formatMoney($amount, $txCurrency) . " في الخزنة بنجاح!");
                 header('Location: treasury.php');
                 exit;
             } catch (Exception $e) {
@@ -250,7 +257,7 @@ require_once __DIR__ . '/includes/header.php';
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap font-black <?= $tx['type'] === 'deposit' ? 'text-emerald-600' : 'text-rose-600' ?>">
-                                    <?= $tx['type'] === 'deposit' ? '+' : '-' ?><?= formatMoney($tx['amount'], $currency) ?>
+                                    <?= $tx['type'] === 'deposit' ? '+' : '-' ?><?= formatMoney($tx['amount'], !empty($tx['currency']) ? $tx['currency'] : $currency) ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap text-slate-500">
                                     <?= formatMoney($tx['balance_before'], $currency) ?>

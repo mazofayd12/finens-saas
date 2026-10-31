@@ -80,7 +80,8 @@ function recordSafeTransaction(
     string $category,
     float $amount,
     string $description,
-    string $transactionDate
+    string $transactionDate,
+    string $currency = 'ج.م'
 ): array {
     if ($amount <= 0) {
         throw new InvalidArgumentException('يجب أن يكون المبلغ أكبر من صفر.');
@@ -114,9 +115,9 @@ function recordSafeTransaction(
         // Insert transaction
         $ins = $db->prepare("
             INSERT INTO safe_transactions (
-                company_id, safe_id, user_id, type, category, amount, balance_before, balance_after, description, transaction_date, created_at
+                company_id, safe_id, user_id, type, category, amount, currency, balance_before, balance_after, description, transaction_date, created_at
             ) VALUES (
-                :cid, :sid, :uid, :type, :cat, :amt, :bb, :ba, :desc, :tdate, :now
+                :cid, :sid, :uid, :type, :cat, :amt, :curr, :bb, :ba, :desc, :tdate, :now
             )
         ");
         $ins->execute([
@@ -126,6 +127,7 @@ function recordSafeTransaction(
             ':type' => $type,
             ':cat' => $category,
             ':amt' => $amount,
+            ':curr' => $currency,
             ':bb' => $balanceBefore,
             ':ba' => $balanceAfter,
             ':desc' => $description,
@@ -152,13 +154,55 @@ function recordSafeTransaction(
 }
 
 /**
+ * Returns supported currencies list
+ */
+function getSupportedCurrencies(): array {
+    return [
+        ['code' => 'ج.م', 'name' => 'جنيه مصري (EGP)', 'symbol' => 'ج.م'],
+        ['code' => '$', 'name' => 'دولار أمريكي (USD)', 'symbol' => '$'],
+        ['code' => 'ر.س', 'name' => 'ريال سعودي (SAR)', 'symbol' => 'ر.س'],
+        ['code' => '€', 'name' => 'يورو (EUR)', 'symbol' => '€'],
+        ['code' => 'د.إ', 'name' => 'درهم إماراتي (AED)', 'symbol' => 'د.إ'],
+        ['code' => 'د.ك', 'name' => 'دينار كويتي (KWD)', 'symbol' => 'د.ك'],
+    ];
+}
+
+/**
  * Converts a number to Arabic words (Tafqeet) for receipts
  */
-function tafqeetNumber(float $num, string $currency = 'جنيه مصري'): string {
+function tafqeetNumber(float $num, string $currency = 'ج.م'): string {
     $num = round($num, 2);
-    $parts = explode('.', (string)$num);
+    $parts = explode('.', sprintf('%.2f', $num));
     $intPart = (int)$parts[0];
-    $fraction = isset($parts[1]) ? (int)str_pad($parts[1], 2, '0', STR_PAD_RIGHT) : 0;
+    $fraction = (int)($parts[1] ?? 0);
+
+    // Map currency code or symbol to Arabic singular/subunit
+    $curr = trim($currency);
+    $mainUnit = 'جنيه مصري';
+    $subUnit = 'قرشاً';
+
+    if (in_array($curr, ['$', 'USD', 'usd', 'دولار', 'دولار أمريكي'])) {
+        $mainUnit = 'دولار أمريكي';
+        $subUnit = 'سنتاً';
+    } elseif (in_array($curr, ['ج.م', 'EGP', 'egp', 'جنيه', 'جنيه مصري'])) {
+        $mainUnit = 'جنيه مصري';
+        $subUnit = 'قرشاً';
+    } elseif (in_array($curr, ['ر.س', 'SAR', 'sar', 'ريال', 'ريال سعودي'])) {
+        $mainUnit = 'ريال سعودي';
+        $subUnit = 'هللة';
+    } elseif (in_array($curr, ['€', 'EUR', 'eur', 'يورو'])) {
+        $mainUnit = 'يورو';
+        $subUnit = 'سنتاً';
+    } elseif (in_array($curr, ['د.إ', 'AED', 'aed', 'درهم', 'درهم إماراتي'])) {
+        $mainUnit = 'درهم إماراتي';
+        $subUnit = 'فلساً';
+    } elseif (in_array($curr, ['د.ك', 'KWD', 'kwd', 'دينار', 'دينار كويتي'])) {
+        $mainUnit = 'دينار كويتي';
+        $subUnit = 'فلساً';
+    } elseif (!empty($curr)) {
+        $mainUnit = $curr;
+        $subUnit = 'أجزاء';
+    }
 
     $ones = [
         "", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة", "عشرة",
@@ -217,9 +261,9 @@ function tafqeetNumber(float $num, string $currency = 'جنيه مصري'): stri
         $text = implode(" و", $res);
     }
 
-    $out = "فقط " . $text . " " . $currency;
+    $out = "فقط " . $text . " " . $mainUnit;
     if ($fraction > 0) {
-        $out .= " و" . $convert3Digits($fraction) . " قرشاً";
+        $out .= " و" . $convert3Digits($fraction) . " " . $subUnit;
     }
     $out .= " لا غير";
     return $out;

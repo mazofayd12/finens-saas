@@ -33,10 +33,21 @@ if (!empty($activeCompanyId)) {
                 <input type="hidden" name="action" value="deposit">
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المودع (<?= htmlspecialchars($currentUser['currency'] ?? 'ج.م') ?>) <span class="text-red-500">*</span></label>
-                    <div class="relative">
-                        <input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00" class="w-full text-xl font-bold bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
-                        <span class="absolute left-3 top-3 text-xs text-slate-400 font-bold"><?= htmlspecialchars($currentUser['currency'] ?? 'ج.م') ?></span>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المودع والعملة <span class="text-red-500">*</span></label>
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00" class="w-full text-xl font-bold bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-emerald-600 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                        </div>
+                        <div class="w-36 shrink-0">
+                            <select name="currency" class="w-full h-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-slate-800 focus:bg-white focus:ring-2 focus:ring-emerald-500 focus:outline-none">
+                                <option value="ج.م" <?= ($currentUser['currency'] ?? 'ج.م') === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه)</option>
+                                <option value="$" <?= ($currentUser['currency'] ?? 'ج.م') === '$' ? 'selected' : '' ?>>$ (دولار)</option>
+                                <option value="ر.س" <?= ($currentUser['currency'] ?? 'ج.م') === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال)</option>
+                                <option value="€" <?= ($currentUser['currency'] ?? 'ج.م') === '€' ? 'selected' : '' ?>>€ (يورو)</option>
+                                <option value="د.إ" <?= ($currentUser['currency'] ?? 'ج.م') === 'د.إ' ? 'selected' : '' ?>>د.إ (درهم)</option>
+                                <option value="د.ك" <?= ($currentUser['currency'] ?? 'ج.م') === 'د.ك' ? 'selected' : '' ?>>د.ك (دينار)</option>
+                            </select>
+                        </div>
                     </div>
                 </div>
 
@@ -90,10 +101,21 @@ if (!empty($activeCompanyId)) {
                 <input type="hidden" name="action" value="create_expense">
 
                 <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المطلوب سحبه (<?= htmlspecialchars($currentUser['currency'] ?? 'ج.م') ?>) <span class="text-red-500">*</span></label>
-                    <div class="relative">
-                        <input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00" class="w-full text-xl font-bold bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-rose-600 focus:bg-white focus:ring-2 focus:ring-rose-500 focus:outline-none">
-                        <span class="absolute left-3 top-3 text-xs text-slate-400 font-bold"><?= htmlspecialchars($currentUser['currency'] ?? 'ج.م') ?></span>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ المطلوب سحبه والعملة <span class="text-red-500">*</span></label>
+                    <div class="flex gap-2">
+                        <div class="relative flex-1">
+                            <input type="number" step="0.01" min="0.01" name="amount" required placeholder="0.00" class="w-full text-xl font-bold bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-rose-600 focus:bg-white focus:ring-2 focus:ring-rose-500 focus:outline-none">
+                        </div>
+                        <div class="w-36 shrink-0">
+                            <select name="currency" class="w-full h-full text-xs font-bold bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-slate-800 focus:bg-white focus:ring-2 focus:ring-rose-500 focus:outline-none">
+                                <option value="ج.م" <?= ($currentUser['currency'] ?? 'ج.م') === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه)</option>
+                                <option value="$" <?= ($currentUser['currency'] ?? 'ج.م') === '$' ? 'selected' : '' ?>>$ (دولار)</option>
+                                <option value="ر.س" <?= ($currentUser['currency'] ?? 'ج.م') === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال)</option>
+                                <option value="€" <?= ($currentUser['currency'] ?? 'ج.م') === '€' ? 'selected' : '' ?>>€ (يورو)</option>
+                                <option value="د.إ" <?= ($currentUser['currency'] ?? 'ج.م') === 'د.إ' ? 'selected' : '' ?>>د.إ (درهم)</option>
+                                <option value="د.ك" <?= ($currentUser['currency'] ?? 'ج.م') === 'د.ك' ? 'selected' : '' ?>>د.ك (دينار)</option>
+                            </select>
+                        </div>
                     </div>
                     <?php if (!empty($mainSafe)): ?>
                         <p class="text-[11px] text-slate-500 mt-1">الرصيد المتاح بالخزنة: <span class="font-bold text-slate-700"><?= formatMoney($mainSafe['balance'], $currentUser['currency'] ?? 'ج.م') ?></span></p>
