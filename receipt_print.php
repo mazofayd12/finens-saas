@@ -183,16 +183,16 @@ $copies = [
                 <div class="flex items-center justify-between pb-2 border-b border-slate-300 relative z-10">
                     <!-- Right: Company Info & Logo -->
                     <div class="flex items-center space-x-3 space-x-reverse">
-                        <div class="w-14 h-14 max-h-14 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-center p-1 overflow-hidden shrink-0">
+                        <div class="h-16 w-24 max-h-16 rounded-xl bg-white border border-slate-300 flex items-center justify-center p-0.5 overflow-hidden shrink-0 shadow-2xs">
                             <?php if (!empty($receipt['company_logo']) && file_exists(APP_PATH . '/' . $receipt['company_logo'])): ?>
-                                <img src="<?= htmlspecialchars($receipt['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full object-contain">
+                                <img src="<?= htmlspecialchars($receipt['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full w-auto h-auto object-contain">
                             <?php else: ?>
-                                <i class="fa-solid fa-building text-2xl text-slate-400"></i>
+                                <i class="fa-solid fa-building text-3xl text-slate-400"></i>
                             <?php endif; ?>
                         </div>
                         <div>
-                            <h1 class="font-black text-slate-900 text-base leading-tight"><?= htmlspecialchars($receipt['company_name']) ?></h1>
-                            <p class="text-[10px] text-slate-500 font-bold mt-0.5">
+                            <h1 class="font-black text-slate-900 text-lg leading-tight"><?= htmlspecialchars($receipt['company_name']) ?></h1>
+                            <p class="text-[11px] text-slate-600 font-bold mt-0.5">
                                 <?= !empty($receipt['company_phone']) ? 'هاتف: ' . htmlspecialchars($receipt['company_phone']) : 'إيصال معتمد' ?>
                             </p>
                         </div>

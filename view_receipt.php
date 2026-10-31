@@ -128,11 +128,11 @@ $publicUrl = isset($receipt) ? getReceiptPublicUrl($receipt) : '';
                 <!-- Company Header -->
                 <div class="flex items-center justify-between pb-6 border-b border-slate-100">
                     <div class="flex items-center space-x-3 space-x-reverse">
-                        <div class="w-14 h-14 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-center p-1 overflow-hidden shrink-0">
+                        <div class="h-16 w-24 sm:w-28 max-h-16 rounded-2xl bg-white border border-slate-200 flex items-center justify-center p-0.5 overflow-hidden shrink-0 shadow-xs">
                             <?php if (!empty($receipt['company_logo']) && file_exists(APP_PATH . '/' . $receipt['company_logo'])): ?>
-                                <img src="<?= htmlspecialchars($receipt['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full object-contain">
+                                <img src="<?= htmlspecialchars($receipt['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full w-auto h-auto object-contain">
                             <?php else: ?>
-                                <i class="fa-solid fa-building text-2xl text-slate-400"></i>
+                                <i class="fa-solid fa-building text-3xl text-slate-400"></i>
                             <?php endif; ?>
                         </div>
                         <div>

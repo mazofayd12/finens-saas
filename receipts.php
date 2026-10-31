@@ -14,43 +14,69 @@ $compStmt = $db->prepare("SELECT * FROM companies WHERE id = :cid LIMIT 1");
 $compStmt->execute([':cid' => $activeCompanyId]);
 $company = $compStmt->fetch();
 
-// Handle Logo Upload
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_logo') {
+// Handle Company Branding & Logo Settings
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array($_POST['action'], ['upload_logo', 'update_company_settings'])) {
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         die('خطأ في التحقق من صحة الطلب');
     }
 
-    if (isset($_FILES['company_logo']) && $_FILES['company_logo']['error'] === UPLOAD_ERR_OK) {
-        $fileTmp = $_FILES['company_logo']['tmp_name'];
-        $fileName = $_FILES['company_logo']['name'];
-        $fileSize = $_FILES['company_logo']['size'];
-        $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+    $companyName = trim($_POST['company_name'] ?? '');
+    $companyPhone = trim($_POST['company_phone'] ?? '');
+    $companyCurrency = trim($_POST['company_currency'] ?? $company['currency'] ?? 'ج.م');
+    $removeLogo = isset($_POST['remove_logo']) && $_POST['remove_logo'] === '1';
 
-        $allowedExts = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
-        if (!in_array($ext, $allowedExts)) {
-            setFlash('error', 'صيغة الصورة غير مدعومة. يرجى رفع ملف صورة (PNG, JPG, WEBP, SVG).');
-        } elseif ($fileSize > 5 * 1024 * 1024) {
-            setFlash('error', 'حجم الصورة كبير جداً، الحد الأقصى 5 ميجابايت.');
-        } else {
-            $newFileName = 'logo_' . $activeCompanyId . '_' . time() . '.' . $ext;
-            $uploadDir = APP_PATH . '/assets/uploads/logos/';
-            if (!is_dir($uploadDir)) {
-                mkdir($uploadDir, 0777, true);
-            }
-            $targetPath = $uploadDir . $newFileName;
+    if (empty($companyName)) {
+        setFlash('error', 'يرجى إدخال اسم المقر / الشركة.');
+    } else {
+        $logoPath = $company['logo'] ?? null;
 
-            if (move_uploaded_file($fileTmp, $targetPath)) {
-                $upd = $db->prepare("UPDATE companies SET logo = :logo WHERE id = :id");
-                $upd->execute([':logo' => 'assets/uploads/logos/' . $newFileName, ':id' => $activeCompanyId]);
-                setFlash('success', 'تم تحديث شعار المقر والشركة بنجاح!');
-                header('Location: receipts.php');
-                exit;
+        if ($removeLogo) {
+            $logoPath = null;
+        }
+
+        // Handle file upload if provided
+        if (isset($_FILES['company_logo']) && $_FILES['company_logo']['error'] === UPLOAD_ERR_OK) {
+            $fileTmp = $_FILES['company_logo']['tmp_name'];
+            $fileName = $_FILES['company_logo']['name'];
+            $fileSize = $_FILES['company_logo']['size'];
+            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+            $allowedExts = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
+            if (!in_array($ext, $allowedExts)) {
+                setFlash('error', 'صيغة الصورة غير مدعومة. يرجى رفع ملف صورة (PNG, JPG, WEBP, SVG).');
+            } elseif ($fileSize > 5 * 1024 * 1024) {
+                setFlash('error', 'حجم الصورة كبير جداً، الحد الأقصى 5 ميجابايت.');
             } else {
-                setFlash('error', 'فشل حفظ ملف الشعار على الخادم.');
+                $newFileName = 'logo_' . $activeCompanyId . '_' . time() . '.' . $ext;
+                $uploadDir = APP_PATH . '/assets/uploads/logos/';
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0777, true);
+                }
+                $targetPath = $uploadDir . $newFileName;
+
+                if (move_uploaded_file($fileTmp, $targetPath)) {
+                    $logoPath = 'assets/uploads/logos/' . $newFileName;
+                } else {
+                    setFlash('error', 'فشل حفظ ملف الشعار على الخادم.');
+                }
             }
         }
-    } else {
-        setFlash('error', 'يرجى اختيار ملف الشعار أولاً.');
+
+        $upd = $db->prepare("UPDATE companies SET name = :name, phone = :phone, currency = :curr, logo = :logo WHERE id = :id");
+        $upd->execute([
+            ':name' => $companyName,
+            ':phone' => $companyPhone,
+            ':curr' => $companyCurrency,
+            ':logo' => $logoPath,
+            ':id' => $activeCompanyId
+        ]);
+
+        // Refresh user session cache
+        getCurrentUser(true);
+
+        setFlash('success', 'تم تحديث اسم الشركة وبيانات المقر والشعار بنجاح!');
+        header('Location: receipts.php');
+        exit;
     }
 }
 
@@ -195,9 +221,9 @@ require_once __DIR__ . '/includes/header.php';
                 <i class="fa-solid fa-file-circle-plus ml-2"></i>
                 إصدار وصل استلام جديد
             </button>
-            <button onclick="openModal('company-logo-modal')" class="inline-flex items-center bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition">
-                <i class="fa-solid fa-image ml-1.5 text-indigo-600"></i>
-                <?= !empty($company['logo']) ? 'تعديل شعار المقر' : 'إضافة شعار المقر' ?>
+            <button onclick="openModal('company-logo-modal')" class="inline-flex items-center bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold px-3 py-2.5 rounded-xl text-xs transition">
+                <i class="fa-solid fa-building-gear ml-1.5 text-indigo-600"></i>
+                تعديل اسم وشعار المقر
             </button>
         </div>
     </div>
@@ -205,24 +231,26 @@ require_once __DIR__ . '/includes/header.php';
     <!-- Company Branding Banner (Logo Status) -->
     <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-5 sm:p-6 text-white shadow-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div class="flex items-center space-x-4 space-x-reverse">
-            <div class="w-16 h-16 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center p-1 overflow-hidden shrink-0">
+            <div class="h-20 w-28 rounded-2xl bg-white border border-white/20 flex items-center justify-center p-1 overflow-hidden shrink-0 shadow-lg">
                 <?php if (!empty($company['logo']) && file_exists(APP_PATH . '/' . $company['logo'])): ?>
-                    <img src="<?= htmlspecialchars($company['logo']) ?>" alt="شعار الشركة" class="w-full h-full object-contain">
+                    <img src="<?= htmlspecialchars($company['logo']) ?>" alt="شعار الشركة" class="max-w-full max-h-full w-auto h-auto object-contain">
                 <?php else: ?>
-                    <i class="fa-solid fa-building text-2xl text-white/60"></i>
+                    <i class="fa-solid fa-building text-3xl text-slate-300"></i>
                 <?php endif; ?>
             </div>
             <div>
-                <span class="text-xs font-bold text-amber-300">شعار وبيانات إيصالات القبض الرسمية</span>
-                <h3 class="text-lg font-black mt-0.5"><?= htmlspecialchars($company['name'] ?? 'شركتي') ?></h3>
+                <span class="text-xs font-bold text-amber-300">شعار واسم المقر المسجل على الإيصالات والفواتير</span>
+                <h3 class="text-xl font-black mt-0.5 text-white"><?= htmlspecialchars($company['name'] ?? 'شركتي') ?></h3>
                 <p class="text-xs text-slate-300 mt-0.5">
-                    المستلم المسجل حالياً: <span class="font-bold text-emerald-400"><?= htmlspecialchars($currentUser['name']) ?></span> (يتم تثبيته تلقائياً على كل وصل يتم إصداره)
+                    هاتف المقر: <span class="font-bold text-slate-100 font-mono"><?= !empty($company['phone']) ? htmlspecialchars($company['phone']) : 'غير محدد' ?></span>
+                    &nbsp;|&nbsp;
+                    المستلم المسجل: <span class="font-bold text-emerald-400"><?= htmlspecialchars($currentUser['name']) ?></span>
                 </p>
             </div>
         </div>
         <div class="flex items-center space-x-2 space-x-reverse">
-            <button onclick="openModal('company-logo-modal')" class="bg-white/15 hover:bg-white/25 text-white border border-white/20 font-bold text-xs px-3.5 py-2 rounded-xl transition">
-                <i class="fa-solid fa-upload ml-1"></i> رفع الشعار للطباعة
+            <button onclick="openModal('company-logo-modal')" class="bg-white/15 hover:bg-white/25 text-white border border-white/20 font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center">
+                <i class="fa-solid fa-pen-to-square ml-1.5"></i> تعديل اسم المقر والشعار
             </button>
         </div>
     </div>
@@ -500,12 +528,17 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
-<!-- COMPANY LOGO UPLOAD MODAL -->
+<!-- COMPANY BRANDING & LOGO MODAL -->
 <div id="company-logo-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
     <div class="modal-backdrop fixed inset-0"></div>
-    <div class="relative bg-white rounded-3xl shadow-2xl max-w-md w-full p-6 modal-animate-enter z-10 border border-slate-100">
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-lg w-full p-6 sm:p-8 modal-animate-enter z-10 border border-slate-100">
         <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-            <h3 class="font-black text-slate-800 text-lg">شعار المقر والشركة للطباعة</h3>
+            <div class="flex items-center space-x-2 space-x-reverse">
+                <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
+                    <i class="fa-solid fa-building-gear"></i>
+                </div>
+                <h3 class="font-black text-slate-800 text-lg">إعدادات اسم المقر والشعار</h3>
+            </div>
             <button onclick="closeModal('company-logo-modal')" class="text-slate-400 hover:text-slate-600 text-lg">
                 <i class="fa-solid fa-xmark"></i>
             </button>
@@ -513,23 +546,56 @@ require_once __DIR__ . '/includes/header.php';
 
         <form action="receipts.php" method="POST" enctype="multipart/form-data" class="space-y-4">
             <?= getCSRFInput() ?>
-            <input type="hidden" name="action" value="upload_logo">
+            <input type="hidden" name="action" value="update_company_settings">
 
-            <div class="text-center p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50">
-                <?php if (!empty($company['logo']) && file_exists(APP_PATH . '/' . $company['logo'])): ?>
-                    <img src="<?= htmlspecialchars($company['logo']) ?>" alt="الشعار الحالي" class="h-20 max-w-full mx-auto object-contain mb-3">
-                    <p class="text-xs text-slate-500 font-bold mb-2">الشعار الحالي محفوظ</p>
-                <?php else: ?>
-                    <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400 mb-2"></i>
-                    <p class="text-xs text-slate-500 font-bold mb-1">اختر صورة الشعار من جهازك</p>
-                <?php endif; ?>
-                <input type="file" name="company_logo" accept="image/*" required class="text-xs text-slate-500 mx-auto">
-                <p class="text-[11px] text-slate-400 mt-2">الصيغ المدعومة: PNG, JPG, WEBP, SVG بحجم حتى 5MB</p>
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">اسم المقر / الشركة (الذي يظهر بأعلى الإيصال) <span class="text-red-500">*</span></label>
+                <input type="text" name="company_name" value="<?= htmlspecialchars($company['name']) ?>" required placeholder="مثال: Vision Trading أو مؤسسة الرؤية للتجارة" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-black text-slate-900 focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم هاتف المقر (يظهر تحت الاسم)</label>
+                    <input type="text" name="company_phone" value="<?= htmlspecialchars($company['phone'] ?? '') ?>" placeholder="010xxxxxxxx" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">العملة الافتراضية</label>
+                    <select name="company_currency" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                        <option value="ج.م" <?= ($company['currency'] ?? 'ج.م') === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه مصري)</option>
+                        <option value="$" <?= ($company['currency'] ?? 'ج.م') === '$' ? 'selected' : '' ?>>$ (دولار أمريكي)</option>
+                        <option value="ر.س" <?= ($company['currency'] ?? 'ج.م') === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال سعودي)</option>
+                        <option value="€" <?= ($company['currency'] ?? 'ج.م') === '€' ? 'selected' : '' ?>>€ (يورو)</option>
+                        <option value="د.إ" <?= ($company['currency'] ?? 'ج.م') === 'د.إ' ? 'selected' : '' ?>>د.إ (درهم إماراتي)</option>
+                        <option value="د.ك" <?= ($company['currency'] ?? 'ج.م') === 'د.ك' ? 'selected' : '' ?>>د.ك (دينار كويتي)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Logo Upload Area -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">شعار المقر (Logo) المطبوع على الإيصالات والفواتير</label>
+                <div class="p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 text-center">
+                    <?php if (!empty($company['logo']) && file_exists(APP_PATH . '/' . $company['logo'])): ?>
+                        <div class="h-20 w-32 mx-auto bg-white border border-slate-200 rounded-xl flex items-center justify-center p-1 mb-2 shadow-xs">
+                            <img src="<?= htmlspecialchars($company['logo']) ?>" alt="الشعار الحالي" class="max-w-full max-h-full object-contain">
+                        </div>
+                        <p class="text-xs text-slate-500 font-bold mb-2">الشعار الحالي محفوظ بحجم كبير</p>
+                        <div class="flex items-center justify-center space-x-2 space-x-reverse mb-3">
+                            <input type="checkbox" id="remove_logo" name="remove_logo" value="1" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
+                            <label for="remove_logo" class="text-xs text-rose-600 font-bold cursor-pointer">حذف الشعار والعودة للافتراضي</label>
+                        </div>
+                    <?php else: ?>
+                        <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400 mb-2"></i>
+                        <p class="text-xs text-slate-500 font-bold mb-1">اختر صورة الشعار من جهازك</p>
+                    <?php endif; ?>
+                    <input type="file" name="company_logo" accept="image/*" class="text-xs text-slate-500 mx-auto block">
+                    <p class="text-[11px] text-slate-400 mt-2">اتركه فارغاً إذا كنت لا ترغب بتغيير الشعار الحالي. الصيغ المدعومة: PNG, JPG, WEBP, SVG</p>
+                </div>
             </div>
 
             <div class="flex items-center space-x-2 space-x-reverse pt-2">
                 <button type="submit" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-xs">
-                    حفظ وتحديث الشعار
+                    حفظ وتحديث بيانات المقر والشعار
                 </button>
                 <button type="button" onclick="closeModal('company-logo-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-xs">
                     إلغاء

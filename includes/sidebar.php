@@ -96,6 +96,10 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
 
             <?php if (isCompanyAdmin()): ?>
                 <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-5 mb-2">إدارة الشركة</p>
+                <a href="settings.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-building-gear w-6 text-center ml-2.5 <?= $currentPage === 'settings.php' ? 'text-white' : 'text-indigo-400' ?>"></i>
+                    <span>إعدادات الشركة والمقر</span>
+                </a>
                 <a href="users.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
                     <i class="fa-solid fa-users w-6 text-center ml-2.5 <?= $currentPage === 'users.php' ? 'text-white' : 'text-slate-400' ?>"></i>
                     <span>مستخدمي الشركة</span>
@@ -182,6 +186,9 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                     </a>
                 <?php endif; ?>
                 <?php if (isCompanyAdmin()): ?>
+                    <a href="settings.php" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white' : 'text-slate-300' ?>">
+                        <i class="fa-solid fa-building-gear ml-3 w-5 text-center text-indigo-400"></i> إعدادات الشركة والمقر
+                    </a>
                     <a href="users.php" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white' : 'text-slate-300' ?>">
                         <i class="fa-solid fa-users ml-3 w-5 text-center"></i> مستخدمي الشركة
                     </a>
