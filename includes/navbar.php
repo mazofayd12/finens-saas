@@ -7,7 +7,7 @@ $isImpersonating = !empty($currentUser['is_impersonating']);
         <!-- Right side: Brand & Mobile toggle & Context Badge -->
         <div class="flex items-center space-x-3 space-x-reverse">
             <!-- Mobile Menu Toggle Button -->
-            <button id="mobile-sidebar-toggle" class="md:hidden p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 focus:outline-none" aria-label="فتح القائمة">
+            <button id="mobile-sidebar-toggle" onclick="openMobileSidebar()" class="md:hidden p-2 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-100 focus:outline-none" aria-label="فتح القائمة">
                 <i class="fa-solid fa-bars text-lg"></i>
             </button>
 

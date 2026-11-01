@@ -50,10 +50,14 @@ body {
     background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
 }
 
-/* Mobile Bottom Navigation padding fix */
+/* Mobile Bottom Navigation & PWA Safe Area padding fix */
+.safe-area-bottom {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)) !important;
+}
+
 @media (max-width: 768px) {
     .content-with-bottom-nav {
-        padding-bottom: 5.5rem !important;
+        padding-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px)) !important;
     }
 }
 

@@ -230,8 +230,8 @@ require_once __DIR__ . '/includes/header.php';
         </form>
     </div>
 
-    <!-- Expenses Table -->
-    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+    <!-- Desktop Expenses Table (Hidden on Mobile) -->
+    <div class="hidden md:block bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div class="overflow-x-auto">
             <table class="w-full text-right text-xs">
                 <thead class="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
@@ -290,6 +290,71 @@ require_once __DIR__ . '/includes/header.php';
                 </tbody>
             </table>
         </div>
+    </div>
+
+    <!-- Mobile Expense Cards Feed (Shown Only on Mobile) -->
+    <div class="block md:hidden space-y-3">
+        <?php if (empty($expensesList)): ?>
+            <div class="bg-white rounded-2xl p-8 border border-slate-200/80 text-center shadow-xs">
+                <div class="w-14 h-14 rounded-2xl bg-rose-50 text-rose-500 flex items-center justify-center text-2xl mx-auto mb-3">
+                    <i class="fa-solid fa-receipt"></i>
+                </div>
+                <h3 class="font-bold text-slate-800 text-sm">لا توجد مصروفات مسجلة</h3>
+                <p class="text-xs text-slate-400 mt-1">لا توجد حركات صرف تطابق خيارات البحث الحالية.</p>
+            </div>
+        <?php else: ?>
+            <div class="flex items-center justify-between px-1">
+                <span class="text-xs font-bold text-slate-600">قائمة المصروفات (<?= count($expensesList) ?>)</span>
+                <span class="text-[11px] text-slate-400">مرتبة من الأحدث للأقدم</span>
+            </div>
+
+            <?php foreach ($expensesList as $exp): ?>
+                <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs active:scale-[0.99] transition">
+                    <!-- Top row: Category Badge & Amount -->
+                    <div class="flex items-start justify-between gap-3 mb-2.5">
+                        <div class="flex items-center space-x-2 space-x-reverse min-w-0">
+                            <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 text-slate-800 border border-slate-200 shrink-0">
+                                <i class="fa-solid fa-tag ml-1 text-slate-400 text-[10px]"></i>
+                                <?= htmlspecialchars($exp['category_name'] ?? 'عام') ?>
+                            </span>
+                            <span class="text-[11px] text-slate-400 font-mono">#<?= $exp['id'] ?></span>
+                        </div>
+                        <div class="text-left shrink-0">
+                            <span class="text-base font-black text-rose-600 block dir-ltr">
+                                -<?= formatMoney($exp['amount'], !empty($exp['currency']) ? $exp['currency'] : $currency) ?>
+                            </span>
+                        </div>
+                    </div>
+
+                    <!-- Middle: Title & Description -->
+                    <div class="mb-3">
+                        <h3 class="font-extrabold text-slate-900 text-sm leading-snug">
+                            <?= htmlspecialchars($exp['title']) ?>
+                        </h3>
+                        <?php if (!empty($exp['description'])): ?>
+                            <p class="text-xs text-slate-600 mt-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100 leading-relaxed">
+                                <?= htmlspecialchars($exp['description']) ?>
+                            </p>
+                        <?php endif; ?>
+                    </div>
+
+                    <!-- Bottom row: Date, User & Action -->
+                    <div class="flex items-center justify-between pt-3 border-t border-slate-100 text-xs">
+                        <div class="flex items-center text-slate-500 text-[11px] truncate">
+                            <i class="fa-regular fa-calendar ml-1 text-slate-400"></i>
+                            <span><?= htmlspecialchars($exp['expense_date']) ?></span>
+                            <span class="mx-1.5 text-slate-300">•</span>
+                            <i class="fa-regular fa-user ml-1 text-slate-400"></i>
+                            <span class="truncate"><?= htmlspecialchars($exp['user_name'] ?? 'المسؤول') ?></span>
+                        </div>
+                        <button onclick='printVoucher(<?= json_encode($exp) ?>, "<?= htmlspecialchars($currentUser['company_name'] ?? 'الشركة') ?>", "<?= !empty($exp['currency']) ? $exp['currency'] : $currency ?>")' class="inline-flex items-center bg-slate-100 hover:bg-rose-50 hover:text-rose-600 text-slate-700 px-3 py-1.5 rounded-xl text-xs font-bold transition border border-slate-200 shrink-0">
+                            <i class="fa-solid fa-receipt ml-1.5 text-rose-500"></i>
+                            <span>طباعة سند</span>
+                        </button>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
     </div>
 </div>
 

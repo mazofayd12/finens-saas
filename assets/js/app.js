@@ -49,6 +49,49 @@ function triggerPwaInstall() {
     });
 }
 
+// Mobile Sidebar & FAB Menu Helpers
+window.openMobileSidebar = function() {
+    const d = document.getElementById('mobile-sidebar-drawer');
+    if (d) {
+        d.classList.remove('hidden');
+        d.classList.add('flex');
+        document.body.style.overflow = 'hidden';
+    }
+};
+
+window.closeMobileSidebar = function() {
+    const d = document.getElementById('mobile-sidebar-drawer');
+    if (d) {
+        d.classList.add('hidden');
+        d.classList.remove('flex');
+        document.body.style.overflow = 'auto';
+    }
+};
+
+window.toggleMobileFabMenu = function() {
+    const sheet = document.getElementById('mobile-quick-actions-sheet');
+    const icon = document.getElementById('fab-icon');
+    if (!sheet) return;
+    if (sheet.classList.contains('hidden')) {
+        sheet.classList.remove('hidden');
+        sheet.classList.add('flex');
+        if (icon) icon.classList.add('rotate-45');
+        document.body.style.overflow = 'hidden';
+    } else {
+        window.closeMobileFabMenu();
+    }
+};
+
+window.closeMobileFabMenu = function() {
+    const sheet = document.getElementById('mobile-quick-actions-sheet');
+    const icon = document.getElementById('fab-icon');
+    if (!sheet) return;
+    sheet.classList.add('hidden');
+    sheet.classList.remove('flex');
+    if (icon) icon.classList.remove('rotate-45');
+    document.body.style.overflow = 'auto';
+};
+
 // Modal Helpers
 function openModal(modalId) {
     const modal = document.getElementById(modalId);

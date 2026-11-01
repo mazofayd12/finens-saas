@@ -144,41 +144,61 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 
     <!-- Printable Header Banner -->
-    <div class="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs">
+    <div class="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/80 shadow-xs">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-slate-100 gap-2">
             <div>
                 <span class="text-xs font-bold text-brand-600">تقرير الأداء المالي</span>
                 <h2 class="text-xl font-black text-slate-800"><?= htmlspecialchars($currentUser['company_name'] ?? 'الشركة') ?></h2>
             </div>
-            <div class="text-left text-xs text-slate-500 font-medium">
+            <div class="text-right sm:text-left text-xs text-slate-500 font-medium">
                 الفترة من: <span class="font-bold text-slate-800"><?= htmlspecialchars($filterFrom) ?></span> إلى: <span class="font-bold text-slate-800"><?= htmlspecialchars($filterTo) ?></span>
             </div>
         </div>
 
-        <!-- 4 Metric Cards -->
-        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-5">
-            <div class="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4">
-                <span class="text-xs font-bold text-emerald-700">إجمالي الإيداعات</span>
-                <p class="text-xl sm:text-2xl font-black text-emerald-800 mt-1"><?= formatMoney($periodDeposits, $currency) ?></p>
-                <span class="text-[11px] text-emerald-600 font-medium">داخل الخزنة</span>
+        <!-- 4 Metric Cards (Clean Stack on Mobile) -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mt-5">
+            <div class="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold text-emerald-700 block">إجمالي الإيداعات</span>
+                    <p class="text-xl sm:text-2xl font-black text-emerald-800 mt-1"><?= formatMoney($periodDeposits, $currency) ?></p>
+                    <span class="text-[11px] text-emerald-600 font-medium block mt-0.5">داخل الخزنة</span>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg shrink-0">
+                    <i class="fa-solid fa-arrow-down-long"></i>
+                </div>
             </div>
 
-            <div class="bg-rose-50/70 border border-rose-200/80 rounded-2xl p-4">
-                <span class="text-xs font-bold text-rose-700">إجمالي المصروفات</span>
-                <p class="text-xl sm:text-2xl font-black text-rose-800 mt-1"><?= formatMoney($periodExpenses, $currency) ?></p>
-                <span class="text-[11px] text-rose-600 font-medium">نفقات تشغيلية وبنود</span>
+            <div class="bg-rose-50/70 border border-rose-200/80 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold text-rose-700 block">إجمالي المصروفات</span>
+                    <p class="text-xl sm:text-2xl font-black text-rose-800 mt-1"><?= formatMoney($periodExpenses, $currency) ?></p>
+                    <span class="text-[11px] text-rose-600 font-medium block mt-0.5">نفقات تشغيلية وبنود</span>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center text-lg shrink-0">
+                    <i class="fa-solid fa-arrow-up-long"></i>
+                </div>
             </div>
 
-            <div class="bg-purple-50/70 border border-purple-200/80 rounded-2xl p-4">
-                <span class="text-xs font-bold text-purple-700">رواتب وأجور الموظفين</span>
-                <p class="text-xl sm:text-2xl font-black text-purple-800 mt-1"><?= formatMoney($periodSalaries, $currency) ?></p>
-                <span class="text-[11px] text-purple-600 font-medium">مسيرات الرواتب</span>
+            <div class="bg-purple-50/70 border border-purple-200/80 rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold text-purple-700 block">رواتب وأجور الموظفين</span>
+                    <p class="text-xl sm:text-2xl font-black text-purple-800 mt-1"><?= formatMoney($periodSalaries, $currency) ?></p>
+                    <span class="text-[11px] text-purple-600 font-medium block mt-0.5">مسيرات الرواتب</span>
+                </div>
+                <div class="w-11 h-11 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center text-lg shrink-0">
+                    <i class="fa-solid fa-users"></i>
+                </div>
             </div>
 
-            <div class="<?= $netCashFlow >= 0 ? 'bg-indigo-50/70 border-indigo-200/80 text-brand-800' : 'bg-amber-50/70 border-amber-200/80 text-amber-800' ?> border rounded-2xl p-4">
-                <span class="text-xs font-bold">صافي التدفق النقدي</span>
-                <p class="text-xl sm:text-2xl font-black mt-1"><?= formatMoney($netCashFlow, $currency) ?></p>
-                <span class="text-[11px] font-bold"><?= $netCashFlow >= 0 ? 'فائض سيولة إيجابي' : 'عجز سيولة' ?></span>
+            <div class="<?= $netCashFlow >= 0 ? 'bg-indigo-50/70 border-indigo-200/80 text-brand-800' : 'bg-amber-50/70 border-amber-200/80 text-amber-800' ?> border rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold block">صافي التدفق النقدي</span>
+                    <p class="text-xl sm:text-2xl font-black mt-1"><?= formatMoney($netCashFlow, $currency) ?></p>
+                    <span class="text-[11px] font-bold block mt-0.5"><?= $netCashFlow >= 0 ? 'فائض سيولة إيجابي' : 'عجز سيولة' ?></span>
+                </div>
+                <div class="w-11 h-11 rounded-xl <?= $netCashFlow >= 0 ? 'bg-indigo-100 text-brand-600' : 'bg-amber-100 text-amber-600' ?> flex items-center justify-center text-lg shrink-0">
+                    <i class="fa-solid <?= $netCashFlow >= 0 ? 'fa-scale-balanced' : 'fa-triangle-exclamation' ?>"></i>
+                </div>
             </div>
         </div>
     </div>
@@ -196,7 +216,7 @@ require_once __DIR__ . '/includes/header.php';
                     <i class="fa-solid fa-chart-column"></i>
                 </div>
             </div>
-            <div class="h-64">
+            <div class="relative h-56 sm:h-64 w-full">
                 <canvas id="monthlyChart"></canvas>
             </div>
         </div>
@@ -212,7 +232,7 @@ require_once __DIR__ . '/includes/header.php';
                     <i class="fa-solid fa-chart-pie"></i>
                 </div>
             </div>
-            <div class="h-64 flex items-center justify-center">
+            <div class="relative h-56 sm:h-64 w-full flex items-center justify-center">
                 <?php if (empty($catValues) || array_sum($catValues) <= 0): ?>
                     <p class="text-slate-400 text-xs font-medium">لا توجد مصروفات مسجلة لهذه الفترة لعرض الرسم البياني.</p>
                 <?php else: ?>
@@ -222,13 +242,15 @@ require_once __DIR__ . '/includes/header.php';
         </div>
     </div>
 
-    <!-- Monthly Comparison Table -->
+    <!-- Monthly Comparison Section (Desktop Table + Mobile Cards Feed) -->
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-        <div class="p-4 sm:p-5 border-b border-slate-100">
-            <h3 class="font-black text-slate-800 text-base">جدول المقارنة الشهرية للأشهر الستة الأخيرة</h3>
+        <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
+            <h3 class="font-black text-slate-800 text-sm sm:text-base">جدول المقارنة الشهرية للأشهر الستة الأخيرة</h3>
+            <span class="text-[11px] text-slate-400 font-medium">حسب حركات الخزنة</span>
         </div>
 
-        <div class="overflow-x-auto">
+        <!-- Desktop Table View -->
+        <div class="hidden md:block overflow-x-auto">
             <table class="w-full text-right text-xs">
                 <thead class="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                     <tr>
@@ -273,6 +295,44 @@ require_once __DIR__ . '/includes/header.php';
                     <?php endforeach; ?>
                 </tbody>
             </table>
+        </div>
+
+        <!-- Mobile Monthly Cards View (Shown on small screens) -->
+        <div class="block md:hidden divide-y divide-slate-100">
+            <?php foreach ($monthlyStats as $ms): ?>
+                <div class="p-4 bg-white hover:bg-slate-50/60 transition">
+                    <div class="flex items-center justify-between mb-2.5">
+                        <span class="font-mono font-black text-slate-900 text-sm"><?= htmlspecialchars($ms['month']) ?></span>
+                        <?php if ($ms['net'] > 0): ?>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                <i class="fa-solid fa-arrow-trend-up ml-1"></i> فائض
+                            </span>
+                        <?php elseif ($ms['net'] < 0): ?>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800">
+                                <i class="fa-solid fa-arrow-trend-down ml-1"></i> عجز
+                            </span>
+                        <?php else: ?>
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
+                                متوازن
+                            </span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2 text-center pt-1">
+                        <div class="bg-emerald-50/60 rounded-xl p-2 border border-emerald-100">
+                            <span class="text-[10px] text-emerald-700 font-bold block">إيداعات</span>
+                            <span class="text-xs font-black text-emerald-800 block mt-0.5"><?= formatMoney($ms['deposits'], $currency) ?></span>
+                        </div>
+                        <div class="bg-rose-50/60 rounded-xl p-2 border border-rose-100">
+                            <span class="text-[10px] text-rose-700 font-bold block">مصروفات</span>
+                            <span class="text-xs font-black text-rose-800 block mt-0.5"><?= formatMoney($ms['expenses'], $currency) ?></span>
+                        </div>
+                        <div class="<?= $ms['net'] >= 0 ? 'bg-indigo-50/60 border-indigo-100' : 'bg-amber-50/60 border-amber-100' ?> rounded-xl p-2 border">
+                            <span class="text-[10px] <?= $ms['net'] >= 0 ? 'text-indigo-700' : 'text-amber-700' ?> font-bold block">الصافي</span>
+                            <span class="text-xs font-black <?= $ms['net'] >= 0 ? 'text-indigo-800' : 'text-amber-800' ?> block mt-0.5"><?= formatMoney($ms['net'], $currency) ?></span>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
         </div>
     </div>
 </div>

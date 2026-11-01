@@ -3,8 +3,55 @@
  * Authentication & Authorization Helper Functions
  */
 
+function setPersistentLoginCookie(int $userId, string $passwordHash): void {
+    $token = $userId . ':' . hash_hmac('sha256', $userId . '|' . $passwordHash, AUTH_SECRET_KEY);
+    $cookieValue = base64_encode($token);
+    $expires = time() + (365 * 24 * 60 * 60); // 365 days (1 year)
+    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (isset($_SERVER['SERVER_PORT']) && $_SERVER['SERVER_PORT'] == 443);
+    setcookie('finens_remember_me', $cookieValue, [
+        'expires' => $expires,
+        'path' => '/',
+        'secure' => $secure,
+        'httponly' => true,
+        'samesite' => 'Lax'
+    ]);
+}
+
 function isLoggedIn(): bool {
-    return isset($_SESSION['user_id']) && !empty($_SESSION['user_id']);
+    if (isset($_SESSION['user_id']) && !empty($_SESSION['user_id'])) {
+        return true;
+    }
+
+    // Auto-login from 1-year persistent cookie for standalone PWA / Home Screen
+    if (!empty($_COOKIE['finens_remember_me'])) {
+        $raw = base64_decode($_COOKIE['finens_remember_me'], true);
+        if ($raw && strpos($raw, ':') !== false) {
+            [$userId, $token] = explode(':', $raw, 2);
+            $userId = (int)$userId;
+            if ($userId > 0) {
+                try {
+                    $db = getDBConnection();
+                    $stmt = $db->prepare("SELECT * FROM users WHERE id = :id AND is_active = 1 LIMIT 1");
+                    $stmt->execute([':id' => $userId]);
+                    $user = $stmt->fetch();
+                    if ($user) {
+                        $expected = hash_hmac('sha256', $userId . '|' . $user['password'], AUTH_SECRET_KEY);
+                        if (hash_equals($expected, $token)) {
+                            $_SESSION['user_id'] = $user['id'];
+                            $_SESSION['user_role'] = $user['role'];
+                            $_SESSION['user_name'] = $user['name'];
+                            $_SESSION['company_id'] = $user['company_id'];
+                            // Extend cookie for another year
+                            setPersistentLoginCookie($user['id'], $user['password']);
+                            return true;
+                        }
+                    }
+                } catch (Exception $e) {}
+            }
+        }
+    }
+
+    return false;
 }
 
 function getCurrentUser(bool $fresh = false): ?array {
@@ -173,6 +220,10 @@ function loginUser(string $username, string $password): bool|string {
     $_SESSION['user_name'] = $user['name'];
     $_SESSION['company_id'] = $user['company_id'];
     unset($_SESSION['impersonate_company_id']);
+    
+    // Set 1-year persistent remember-me cookie for Home Screen PWA
+    setPersistentLoginCookie($user['id'], $user['password']);
+
     getCurrentUser(true); // reset cached current user
 
     return true;
@@ -187,5 +238,7 @@ function logoutUser(): void {
             $params["secure"], $params["httponly"]
         );
     }
+    // Delete 1-year persistent cookie
+    setcookie('finens_remember_me', '', time() - 86400, '/');
     session_destroy();
 }

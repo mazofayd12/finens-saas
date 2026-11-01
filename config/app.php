@@ -4,10 +4,10 @@
  */
 
 if (session_status() === PHP_SESSION_NONE) {
-    // 30 days session persistence
-    ini_set('session.gc_maxlifetime', 2592000);
+    // 1 Year (365 days) persistent session
+    ini_set('session.gc_maxlifetime', 31536000);
     session_set_cookie_params([
-        'lifetime' => 2592000,
+        'lifetime' => 31536000,
         'path' => '/',
         'httponly' => true,
         'samesite' => 'Lax'
@@ -23,6 +23,7 @@ if (!defined('APP_PATH')) {
 define('APP_NAME', 'فينانس ساس - لوحة التحكم المالية');
 define('APP_SHORT_NAME', 'فينانس');
 define('APP_VERSION', '1.0.0');
+define('AUTH_SECRET_KEY', 'finens_super_persistent_key_2026_saas_sec');
 
 require_once APP_PATH . '/config/database.php';
 require_once APP_PATH . '/includes/auth.php';
