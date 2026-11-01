@@ -17,9 +17,9 @@ if (!empty($activeCompanyId)) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <meta name="theme-color" content="#4f46e5">
+    <meta name="theme-color" content="#ffffff">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <meta name="apple-mobile-web-app-title" content="<?= htmlspecialchars(APP_SHORT_NAME) ?>">
     <link rel="manifest" href="manifest.json">
     <link rel="icon" type="image/png" sizes="192x192" href="assets/icons/icon-192x192.png">
@@ -83,12 +83,12 @@ if (!empty($activeCompanyId)) {
         <?php include_once __DIR__ . '/sidebar.php'; ?>
 
         <!-- Main Content Area -->
-        <div class="flex-1 flex flex-col min-w-0 overflow-hidden content-with-bottom-nav">
+        <div class="flex-1 flex flex-col min-w-0">
             <!-- Top Navbar -->
             <?php include_once __DIR__ . '/navbar.php'; ?>
 
             <!-- Page Body -->
-            <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
+            <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full app-main-content">
                 <!-- Flash Messages -->
                 <?php $flashes = getFlashes(); if (!empty($flashes)): ?>
                     <div class="mb-5 space-y-2">

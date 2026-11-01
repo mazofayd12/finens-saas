@@ -282,8 +282,8 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
 </div>
 
 <!-- Mobile App Bottom Navigation Bar (Symmetrical 5-Column Native Layout) -->
-<nav class="no-print md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200 z-40 px-2 py-1.5 shadow-lg safe-area-bottom">
-    <div class="grid grid-cols-5 items-center text-center">
+<nav id="app-bottom-nav" class="no-print md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200/80 z-40 px-2 py-1 shadow-[0_-4px_25px_rgba(0,0,0,0.06)] safe-area-bottom">
+    <div class="grid grid-cols-5 items-center text-center h-14">
         <!-- 1: Dashboard -->
         <a href="dashboard.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'dashboard.php' ? 'text-brand-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
             <i class="fa-solid fa-chart-pie text-lg mb-0.5 <?= $currentPage === 'dashboard.php' ? 'text-brand-600 scale-110' : '' ?>"></i>

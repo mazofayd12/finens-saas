@@ -2,8 +2,8 @@
 $isSuper = isSuperAdmin();
 $isImpersonating = !empty($currentUser['is_impersonating']);
 ?>
-<header class="no-print bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-    <div class="px-4 sm:px-6 py-3 flex items-center justify-between">
+<header id="app-header" class="no-print bg-white/95 backdrop-blur-md border-b border-slate-200 fixed md:sticky top-0 inset-x-0 z-30 shadow-xs safe-area-top">
+    <div class="px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between min-h-[3.75rem]">
         <!-- Right side: Brand & Mobile toggle & Context Badge -->
         <div class="flex items-center space-x-3 space-x-reverse">
             <!-- Mobile Menu Toggle Button -->
