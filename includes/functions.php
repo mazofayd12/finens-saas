@@ -297,12 +297,10 @@ function getReceiptPublicUrl(array|int|string $receipt): string {
     $baseUrl = getAppBaseUrl();
     if (is_array($receipt)) {
         $num = $receipt['receipt_number'] ?? ('REC-' . $receipt['id']);
-        $token = getReceiptVerificationToken($receipt);
     } else {
         $num = is_numeric($receipt) ? ('REC-' . $receipt) : $receipt;
-        $token = getReceiptVerificationToken($receipt);
     }
-    return $baseUrl . '/view_receipt.php?num=' . urlencode($num) . '&token=' . $token;
+    return $baseUrl . '/view_receipt.php?r=' . urlencode($num);
 }
 
 /**

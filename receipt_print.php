@@ -91,6 +91,14 @@ $copies = [
             overflow: hidden;
         }
 
+        .qr-code-box canvas,
+        .qr-code-box img {
+            width: 100% !important;
+            height: 100% !important;
+            display: block;
+            image-rendering: pixelated;
+        }
+
         .cut-line {
             height: 7mm;
             display: flex;
@@ -291,11 +299,11 @@ $copies = [
 
                     <!-- QR Code Electronic Verification -->
                     <div class="flex flex-col items-center justify-center">
-                        <div class="qr-code-box w-12 h-12 flex items-center justify-center bg-white border border-slate-300 rounded p-0.5" id="qr-code-slip-<?= $idx ?>">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=<?= urlencode($receiptPublicUrl) ?>" alt="QR" class="w-11 h-11 object-contain qr-img">
+                        <div class="qr-code-box w-[82px] h-[82px] flex items-center justify-center bg-white border border-slate-400 rounded-lg p-1 shadow-2xs overflow-hidden" id="qr-code-slip-<?= $idx ?>">
+                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=1&data=<?= urlencode($receiptPublicUrl) ?>" alt="QR" class="w-full h-full object-contain qr-img">
                         </div>
-                        <span class="text-slate-600 font-black block text-[8px] mt-0.5 leading-tight tracking-tighter">
-                            <i class="fa-solid fa-qrcode text-indigo-600 ml-0.5"></i> امسح للفاتورة أونلاين
+                        <span class="text-slate-800 font-black block text-[8.5px] mt-0.5 leading-tight tracking-tighter whitespace-nowrap">
+                            <i class="fa-solid fa-qrcode text-brand-600 ml-0.5"></i> امسح للفاتورة أونلاين
                         </span>
                     </div>
                 </div>
@@ -321,11 +329,11 @@ $copies = [
                 box.innerHTML = '';
                 new QRCode(box, {
                     text: targetUrl,
-                    width: 44,
-                    height: 44,
+                    width: 76,
+                    height: 76,
                     colorDark: "#000000",
                     colorLight: "#ffffff",
-                    correctLevel: QRCode.CorrectLevel.M
+                    correctLevel: QRCode.CorrectLevel.L
                 });
             });
         } catch (e) {

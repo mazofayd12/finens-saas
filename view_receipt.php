@@ -2,7 +2,7 @@
 require_once __DIR__ . '/config/app.php';
 
 // Public electronic receipt viewer & verification page (No login required)
-$receiptNum = trim($_GET['num'] ?? '');
+$receiptNum = trim($_GET['r'] ?? $_GET['num'] ?? '');
 $receiptId = (int)($_GET['id'] ?? 0);
 
 if (empty($receiptNum) && $receiptId <= 0) {
