@@ -182,12 +182,23 @@ require_once __DIR__ . '/includes/header.php';
         </div>
 
         <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
-            <div>
-                <p class="text-xs font-bold text-slate-500">الرصيد المتبقي بالخزنة</p>
-                <p class="text-2xl font-black text-emerald-600 mt-1"><?= formatMoney($safe['balance'], $currency) ?></p>
-                <span class="text-[11px] text-emerald-600 font-semibold">متاح للصرف</span>
+            <div class="min-w-0 flex-1">
+                <p class="text-xs font-bold text-slate-500">الرصيد المتاح بالخزنة</p>
+                <?php 
+                $expBals = $safe['balances'] ?? [$currency => $safe['balance']];
+                $activeExpBals = array_filter($expBals, fn($b) => abs($b) > 0.001);
+                if (empty($activeExpBals)) $activeExpBals = [$currency => 0.00];
+                ?>
+                <div class="flex flex-wrap gap-1.5 mt-1.5">
+                    <?php foreach ($activeExpBals as $bCurr => $bAmt): ?>
+                        <span class="inline-flex items-center px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-800 font-black text-sm border border-emerald-200 dir-ltr">
+                            <?= formatMoney($bAmt, $bCurr) ?>
+                        </span>
+                    <?php endforeach; ?>
+                </div>
+                <span class="text-[11px] text-emerald-600 font-semibold block mt-1">متاح للصرف</span>
             </div>
-            <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
+            <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shrink-0 mr-3">
                 <i class="fa-solid fa-vault"></i>
             </div>
         </div>

@@ -57,6 +57,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // Fetch Safe Ledger with filters
 $filterType = $_GET['type'] ?? '';
+$filterCurrency = $_GET['currency'] ?? '';
 $filterFrom = $_GET['from'] ?? date('Y-m-01');
 $filterTo = $_GET['to'] ?? date('Y-m-d');
 
@@ -72,6 +73,10 @@ if (!empty($filterType)) {
     $query .= " AND st.type = :type";
     $params[':type'] = $filterType;
 }
+if (!empty($filterCurrency)) {
+    $query .= " AND st.currency = :curr";
+    $params[':curr'] = $filterCurrency;
+}
 if (!empty($filterFrom)) {
     $query .= " AND st.transaction_date >= :from";
     $params[':from'] = $filterFrom;
@@ -86,14 +91,15 @@ $stmt = $db->prepare($query);
 $stmt->execute($params);
 $transactions = $stmt->fetchAll();
 
-// Period Totals
-$periodDeposits = 0;
-$periodWithdrawals = 0;
+// Period Totals by currency
+$periodDepositsByCurrency = [];
+$periodWithdrawalsByCurrency = [];
 foreach ($transactions as $t) {
+    $c = !empty($t['currency']) ? $t['currency'] : $currency;
     if ($t['type'] === 'deposit') {
-        $periodDeposits += (float)$t['amount'];
+        $periodDepositsByCurrency[$c] = ($periodDepositsByCurrency[$c] ?? 0) + (float)$t['amount'];
     } else {
-        $periodWithdrawals += (float)$t['amount'];
+        $periodWithdrawalsByCurrency[$c] = ($periodWithdrawalsByCurrency[$c] ?? 0) + (float)$t['amount'];
     }
 }
 
@@ -107,7 +113,7 @@ require_once __DIR__ . '/includes/header.php';
         <div>
             <h1 class="text-2xl font-black text-slate-900">الخزنة والحركات النقدية</h1>
             <p class="text-xs text-slate-500 mt-1">
-                متابعة رصيد الخزنة الفعلي، تسجيل الإيداعات النقدية، وكشف حساب تفصيلي للحركات
+                متابعة أرصدة الخزنة الفعلية متعددة العملات، تسجيل الإيداعات النقدية، وكشف حساب تفصيلي للحركات
             </p>
         </div>
         <div class="flex items-center space-x-2 space-x-reverse">
@@ -121,28 +127,54 @@ require_once __DIR__ . '/includes/header.php';
         </div>
     </div>
 
-    <!-- Safe Card & Period Stats -->
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-        <!-- Main Safe Balance -->
-        <div class="gradient-safe rounded-3xl p-6 text-white shadow-xl shadow-emerald-500/10 flex flex-col justify-between">
-            <div>
-                <div class="flex items-center justify-between mb-2">
-                    <span class="text-xs font-black uppercase tracking-wider bg-white/20 px-3 py-1 rounded-full">
-                        <i class="fa-solid fa-vault ml-1"></i> <?= htmlspecialchars($safe['name']) ?>
-                    </span>
-                    <i class="fa-solid fa-coins text-white/50 text-2xl"></i>
-                </div>
-                <p class="text-xs text-emerald-100 font-bold mt-2">الرصيد الفعلي الحالي بالخزنة</p>
-                <h2 class="text-3xl sm:text-4xl font-black mt-2 tracking-tight">
-                    <?= formatMoney($safe['balance'], $currency) ?>
-                </h2>
-            </div>
-            <div class="pt-4 mt-3 border-t border-white/20 text-[11px] text-emerald-100 flex items-center justify-between">
-                <span>الشركة: <?= htmlspecialchars($currentUser['company_name'] ?? '') ?></span>
-                <span class="font-bold">جاهز للمعاملات</span>
-            </div>
+    <!-- Multi-Currency Vault Balances Grid (Dedicated Cards) -->
+    <div>
+        <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-black text-slate-800 flex items-center">
+                <i class="fa-solid fa-coins ml-2 text-amber-500"></i>
+                أرصدة الخزنة الفعلية حسب العملة
+            </h2>
+            <span class="text-xs text-slate-400 font-medium">كل عملة برصيد مستقل ومحمي من الاختلاط</span>
         </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <?php 
+            $safeBals = $safe['balances'] ?? [$currency => $safe['balance']];
+            // Ensure primary currency is always shown even if 0
+            if (!isset($safeBals[$currency])) {
+                $safeBals[$currency] = 0.00;
+            }
+            foreach ($safeBals as $sCurr => $sBal): 
+                $isPrimary = ($sCurr === $currency);
+            ?>
+                <div class="bg-white rounded-2xl p-5 border <?= $isPrimary ? 'border-brand-300 ring-2 ring-brand-50' : 'border-slate-200/80' ?> shadow-xs flex flex-col justify-between relative overflow-hidden">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold <?= $isPrimary ? 'bg-brand-50 text-brand-700' : 'bg-slate-100 text-slate-700' ?>">
+                            <i class="fa-solid fa-money-bill-wave ml-1.5 text-slate-400"></i>
+                            <?= $sCurr === '$' ? 'دولار أمريكي' : ($sCurr === 'ج.م' ? 'جنيه مصري' : ($sCurr === 'ر.س' ? 'ريال سعودي' : ($sCurr === '€' ? 'يورو' : $sCurr))) ?> (<?= htmlspecialchars($sCurr) ?>)
+                        </span>
+                        <?php if ($isPrimary): ?>
+                            <span class="text-[10px] font-bold text-brand-600 bg-brand-50 px-2 py-0.5 rounded-full border border-brand-200">الأساسية</span>
+                        <?php endif; ?>
+                    </div>
+                    <div>
+                        <span class="text-[11px] text-slate-400 font-medium block">الرصيد الفعلي الحالي:</span>
+                        <h3 class="text-2xl font-black <?= $sBal >= 0 ? 'text-emerald-600' : 'text-rose-600' ?> mt-0.5 dir-ltr text-right">
+                            <?= formatMoney($sBal, $sCurr) ?>
+                        </h3>
+                    </div>
+                    <div class="pt-3 mt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <a href="treasury.php?currency=<?= urlencode($sCurr) ?>" class="text-[11px] font-bold text-slate-500 hover:text-brand-600 transition flex items-center">
+                            <i class="fa-solid fa-filter ml-1 text-slate-400"></i> فلترة حركات <?= htmlspecialchars($sCurr) ?>
+                        </a>
+                        <span class="text-[10px] text-emerald-600 font-bold bg-emerald-50 px-2 py-0.5 rounded-full">متاح</span>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
 
+    <!-- Period Stats Summary -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <!-- Period Deposits -->
         <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex flex-col justify-between">
             <div class="flex items-center justify-between">
@@ -151,9 +183,19 @@ require_once __DIR__ . '/includes/header.php';
                     <i class="fa-solid fa-arrow-down"></i>
                 </div>
             </div>
-            <div class="mt-4">
-                <h3 class="text-2xl font-black text-emerald-600"><?= formatMoney($periodDeposits, $currency) ?></h3>
-                <p class="text-[11px] text-slate-400 mt-1">خلال الفترة من <?= htmlspecialchars($filterFrom) ?> إلى <?= htmlspecialchars($filterTo) ?></p>
+            <div class="mt-3">
+                <?php if (empty($periodDepositsByCurrency)): ?>
+                    <h3 class="text-2xl font-black text-slate-400">0.00 <?= htmlspecialchars($currency) ?></h3>
+                <?php else: ?>
+                    <div class="flex flex-wrap gap-2">
+                        <?php foreach ($periodDepositsByCurrency as $pCurr => $pAmt): ?>
+                            <span class="inline-flex items-center px-3 py-1 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 font-black text-lg dir-ltr">
+                                +<?= formatMoney($pAmt, $pCurr) ?>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <p class="text-[11px] text-slate-400 mt-2">من <?= htmlspecialchars($filterFrom) ?> إلى <?= htmlspecialchars($filterTo) ?></p>
             </div>
         </div>
 
@@ -165,16 +207,26 @@ require_once __DIR__ . '/includes/header.php';
                     <i class="fa-solid fa-arrow-up"></i>
                 </div>
             </div>
-            <div class="mt-4">
-                <h3 class="text-2xl font-black text-rose-600"><?= formatMoney($periodWithdrawals, $currency) ?></h3>
-                <p class="text-[11px] text-slate-400 mt-1">مصروفات + رواتب مسحوبة من الخزنة</p>
+            <div class="mt-3">
+                <?php if (empty($periodWithdrawalsByCurrency)): ?>
+                    <h3 class="text-2xl font-black text-slate-400">0.00 <?= htmlspecialchars($currency) ?></h3>
+                <?php else: ?>
+                    <div class="flex flex-wrap gap-2">
+                        <?php foreach ($periodWithdrawalsByCurrency as $pCurr => $pAmt): ?>
+                            <span class="inline-flex items-center px-3 py-1 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 font-black text-lg dir-ltr">
+                                -<?= formatMoney($pAmt, $pCurr) ?>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <p class="text-[11px] text-slate-400 mt-2">مصروفات + رواتب مسحوبة من الخزنة</p>
             </div>
         </div>
     </div>
 
     <!-- Filter Form -->
     <div class="no-print bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
-        <form method="GET" action="treasury.php" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end text-xs">
+        <form method="GET" action="treasury.php" class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end text-xs">
             <div>
                 <label class="block font-bold text-slate-700 mb-1">نوع الحركة</label>
                 <select name="type" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:outline-none">
@@ -182,6 +234,17 @@ require_once __DIR__ . '/includes/header.php';
                     <option value="deposit" <?= $filterType === 'deposit' ? 'selected' : '' ?>>إيداعات نقدية فقط</option>
                     <option value="expense" <?= $filterType === 'expense' ? 'selected' : '' ?>>مصروفات فقط</option>
                     <option value="salary" <?= $filterType === 'salary' ? 'selected' : '' ?>>رواتب فقط</option>
+                </select>
+            </div>
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">العملة</label>
+                <select name="currency" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus:bg-white focus:outline-none">
+                    <option value="">-- كل العملات --</option>
+                    <?php foreach (getSupportedCurrencies() as $cCode => $cLabel): ?>
+                        <option value="<?= $cCode ?>" <?= $filterCurrency === $cCode ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($cLabel) ?> (<?= htmlspecialchars($cCode) ?>)
+                        </option>
+                    <?php endforeach; ?>
                 </select>
             </div>
             <div>
@@ -203,20 +266,22 @@ require_once __DIR__ . '/includes/header.php';
         </form>
     </div>
 
-    <!-- Ledger Table -->
+    <!-- Ledger (Desktop Table + Mobile Cards) -->
     <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
             <h3 class="font-black text-slate-800 text-base">كشف حساب الخزنة التفصيلي (Ledger)</h3>
             <span class="text-xs text-slate-400 font-medium"><?= count($transactions) ?> حركة مسجلة</span>
         </div>
 
-        <div class="overflow-x-auto">
+        <!-- Desktop Table View -->
+        <div class="hidden md:block overflow-x-auto">
             <table class="w-full text-right text-xs">
                 <thead class="bg-slate-50 text-slate-500 font-bold border-b border-slate-200">
                     <tr>
                         <th class="p-3.5">#</th>
                         <th class="p-3.5">النوع</th>
                         <th class="p-3.5">البند / البيان</th>
+                        <th class="p-3.5">العملة</th>
                         <th class="p-3.5">المبلغ</th>
                         <th class="p-3.5">الرصيد قبل</th>
                         <th class="p-3.5">الرصيد بعد</th>
@@ -227,10 +292,12 @@ require_once __DIR__ . '/includes/header.php';
                 <tbody class="divide-y divide-slate-100 text-slate-700">
                     <?php if (empty($transactions)): ?>
                         <tr>
-                            <td colspan="8" class="p-8 text-center text-slate-400">لا توجد حركات مسجلة خلال الفترة المحددة.</td>
+                            <td colspan="9" class="p-8 text-center text-slate-400">لا توجد حركات مسجلة تطابق شروط البحث الحالية.</td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($transactions as $tx): ?>
+                        <?php foreach ($transactions as $tx): 
+                            $txCurr = !empty($tx['currency']) ? $tx['currency'] : $currency;
+                        ?>
                             <tr class="hover:bg-slate-50/70 transition">
                                 <td class="p-3.5 font-mono text-slate-400 text-[11px]">
                                     #<?= $tx['id'] ?>
@@ -256,14 +323,19 @@ require_once __DIR__ . '/includes/header.php';
                                         <p class="text-[11px] font-normal text-slate-500 mt-0.5"><?= htmlspecialchars($tx['description']) ?></p>
                                     <?php endif; ?>
                                 </td>
-                                <td class="p-3.5 whitespace-nowrap font-black <?= $tx['type'] === 'deposit' ? 'text-emerald-600' : 'text-rose-600' ?>">
-                                    <?= $tx['type'] === 'deposit' ? '+' : '-' ?><?= formatMoney($tx['amount'], !empty($tx['currency']) ? $tx['currency'] : $currency) ?>
+                                <td class="p-3.5 whitespace-nowrap">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-bold bg-slate-100 text-slate-800 border border-slate-200">
+                                        <?= htmlspecialchars($txCurr) ?>
+                                    </span>
                                 </td>
-                                <td class="p-3.5 whitespace-nowrap text-slate-500">
-                                    <?= formatMoney($tx['balance_before'], $currency) ?>
+                                <td class="p-3.5 whitespace-nowrap font-black <?= $tx['type'] === 'deposit' ? 'text-emerald-600' : 'text-rose-600' ?> text-sm dir-ltr">
+                                    <?= $tx['type'] === 'deposit' ? '+' : '-' ?><?= formatMoney($tx['amount'], $txCurr) ?>
                                 </td>
-                                <td class="p-3.5 whitespace-nowrap font-bold text-slate-800">
-                                    <?= formatMoney($tx['balance_after'], $currency) ?>
+                                <td class="p-3.5 whitespace-nowrap text-slate-500 dir-ltr">
+                                    <?= formatMoney($tx['balance_before'], $txCurr) ?>
+                                </td>
+                                <td class="p-3.5 whitespace-nowrap font-black text-slate-800 dir-ltr">
+                                    <?= formatMoney($tx['balance_after'], $txCurr) ?>
                                 </td>
                                 <td class="p-3.5 whitespace-nowrap text-slate-600">
                                     <?= htmlspecialchars($tx['transaction_date']) ?>
@@ -276,6 +348,53 @@ require_once __DIR__ . '/includes/header.php';
                     <?php endif; ?>
                 </tbody>
             </table>
+        </div>
+
+        <!-- Mobile Cards View (Shown only on small screens) -->
+        <div class="block md:hidden divide-y divide-slate-100">
+            <?php if (empty($transactions)): ?>
+                <div class="p-8 text-center text-slate-400 text-xs">لا توجد حركات مسجلة تطابق شروط البحث الحالية.</div>
+            <?php else: ?>
+                <?php foreach ($transactions as $tx): 
+                    $txCurr = !empty($tx['currency']) ? $tx['currency'] : $currency;
+                ?>
+                    <div class="p-4 bg-white hover:bg-slate-50/70 transition space-y-2">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <?php if ($tx['type'] === 'deposit'): ?>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-100 text-emerald-800">
+                                        <i class="fa-solid fa-arrow-down ml-1"></i> إيداع
+                                    </span>
+                                <?php elseif ($tx['type'] === 'salary'): ?>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full font-bold text-[10px] bg-purple-100 text-purple-800">
+                                        <i class="fa-solid fa-money-check-dollar ml-1"></i> راتب
+                                    </span>
+                                <?php else: ?>
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full font-bold text-[10px] bg-rose-100 text-rose-800">
+                                        <i class="fa-solid fa-arrow-up ml-1"></i> مصروف
+                                    </span>
+                                <?php endif; ?>
+                                <span class="font-mono text-slate-400 text-[11px]">#<?= $tx['id'] ?></span>
+                            </div>
+                            <div class="text-left font-black <?= $tx['type'] === 'deposit' ? 'text-emerald-600' : 'text-rose-600' ?> text-sm dir-ltr">
+                                <?= $tx['type'] === 'deposit' ? '+' : '-' ?><?= formatMoney($tx['amount'], $txCurr) ?>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h4 class="font-bold text-slate-900 text-xs"><?= htmlspecialchars($tx['category']) ?></h4>
+                            <?php if (!empty($tx['description'])): ?>
+                                <p class="text-[11px] text-slate-500 mt-0.5"><?= htmlspecialchars($tx['description']) ?></p>
+                            <?php endif; ?>
+                        </div>
+
+                        <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>الرصيد بعدها: <b class="text-slate-800 dir-ltr"><?= formatMoney($tx['balance_after'], $txCurr) ?></b></span>
+                            <span><?= htmlspecialchars($tx['transaction_date']) ?></span>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            <?php endif; ?>
         </div>
     </div>
 </div>

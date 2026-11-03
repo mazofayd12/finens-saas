@@ -9,37 +9,46 @@ $currency = $currentUser['currency'] ?? 'ج.م';
 $db = getDBConnection();
 $safe = getCompanyMainSafe($activeCompanyId);
 
-// Filter by Month or custom date
+// Filter by Month, custom date, or currency
 $filterMonth = $_GET['month'] ?? date('Y-m');
+$filterCurrency = $_GET['currency'] ?? '';
 $filterFrom = $_GET['from'] ?? date('Y-m-01', strtotime($filterMonth . '-01'));
 $filterTo = $_GET['to'] ?? date('Y-m-t', strtotime($filterMonth . '-01'));
+
+$currSql = "";
+$currParams = [':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo];
+if (!empty($filterCurrency)) {
+    $currSql = " AND currency = :curr";
+    $currParams[':curr'] = $filterCurrency;
+}
 
 // Total deposits in period
 $depStmt = $db->prepare("
     SELECT COALESCE(SUM(amount), 0) FROM safe_transactions
-    WHERE company_id = :cid AND type = 'deposit' AND transaction_date BETWEEN :from AND :to
+    WHERE company_id = :cid AND type = 'deposit' AND transaction_date BETWEEN :from AND :to {$currSql}
 ");
-$depStmt->execute([':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo]);
+$depStmt->execute($currParams);
 $periodDeposits = (float)$depStmt->fetchColumn();
 
 // Total general expenses in period
 $expStmt = $db->prepare("
     SELECT COALESCE(SUM(amount), 0) FROM safe_transactions
-    WHERE company_id = :cid AND type = 'expense' AND transaction_date BETWEEN :from AND :to
+    WHERE company_id = :cid AND type = 'expense' AND transaction_date BETWEEN :from AND :to {$currSql}
 ");
-$expStmt->execute([':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo]);
+$expStmt->execute($currParams);
 $periodExpenses = (float)$expStmt->fetchColumn();
 
 // Total salaries in period
 $salStmt = $db->prepare("
     SELECT COALESCE(SUM(amount), 0) FROM safe_transactions
-    WHERE company_id = :cid AND type = 'salary' AND transaction_date BETWEEN :from AND :to
+    WHERE company_id = :cid AND type = 'salary' AND transaction_date BETWEEN :from AND :to {$currSql}
 ");
-$salStmt->execute([':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo]);
+$salStmt->execute($currParams);
 $periodSalaries = (float)$salStmt->fetchColumn();
 
 $totalOutflow = $periodExpenses + $periodSalaries;
 $netCashFlow = $periodDeposits - $totalOutflow;
+$reportCurrency = !empty($filterCurrency) ? $filterCurrency : $currency;
 
 // Expenses by category for Chart.js
 $catStmt = $db->prepare("
@@ -119,10 +128,21 @@ require_once __DIR__ . '/includes/header.php';
 
     <!-- Filter Bar -->
     <div class="no-print bg-white rounded-2xl p-4 border border-slate-200/80 shadow-xs">
-        <form method="GET" action="reports.php" class="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end text-xs">
+        <form method="GET" action="reports.php" class="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end text-xs">
             <div>
                 <label class="block font-bold text-slate-700 mb-1">تحديد الشهر</label>
                 <input type="month" name="month" value="<?= htmlspecialchars($filterMonth) ?>" onchange="this.form.submit()" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
+            </div>
+            <div>
+                <label class="block font-bold text-slate-700 mb-1">العملة</label>
+                <select name="currency" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 font-bold focus:outline-none">
+                    <option value="">-- كل العملات --</option>
+                    <?php foreach (getSupportedCurrencies() as $cCode => $cLabel): ?>
+                        <option value="<?= $cCode ?>" <?= $filterCurrency === $cCode ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($cLabel) ?> (<?= htmlspecialchars($cCode) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
             <div>
                 <label class="block font-bold text-slate-700 mb-1">من تاريخ</label>
@@ -149,6 +169,11 @@ require_once __DIR__ . '/includes/header.php';
             <div>
                 <span class="text-xs font-bold text-brand-600">تقرير الأداء المالي</span>
                 <h2 class="text-xl font-black text-slate-800"><?= htmlspecialchars($currentUser['company_name'] ?? 'الشركة') ?></h2>
+                <?php if (!empty($filterCurrency)): ?>
+                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-brand-50 text-brand-700 mt-1 border border-brand-200">
+                        محدد بعملة: <?= htmlspecialchars($filterCurrency) ?>
+                    </span>
+                <?php endif; ?>
             </div>
             <div class="text-right sm:text-left text-xs text-slate-500 font-medium">
                 الفترة من: <span class="font-bold text-slate-800"><?= htmlspecialchars($filterFrom) ?></span> إلى: <span class="font-bold text-slate-800"><?= htmlspecialchars($filterTo) ?></span>
@@ -160,7 +185,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="bg-emerald-50/70 border border-emerald-200/80 rounded-2xl p-4 flex items-center justify-between">
                 <div>
                     <span class="text-xs font-bold text-emerald-700 block">إجمالي الإيداعات</span>
-                    <p class="text-xl sm:text-2xl font-black text-emerald-800 mt-1"><?= formatMoney($periodDeposits, $currency) ?></p>
+                    <p class="text-xl sm:text-2xl font-black text-emerald-800 mt-1"><?= formatMoney($periodDeposits, $reportCurrency) ?></p>
                     <span class="text-[11px] text-emerald-600 font-medium block mt-0.5">داخل الخزنة</span>
                 </div>
                 <div class="w-11 h-11 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center text-lg shrink-0">
@@ -171,7 +196,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="bg-rose-50/70 border border-rose-200/80 rounded-2xl p-4 flex items-center justify-between">
                 <div>
                     <span class="text-xs font-bold text-rose-700 block">إجمالي المصروفات</span>
-                    <p class="text-xl sm:text-2xl font-black text-rose-800 mt-1"><?= formatMoney($periodExpenses, $currency) ?></p>
+                    <p class="text-xl sm:text-2xl font-black text-rose-800 mt-1"><?= formatMoney($periodExpenses, $reportCurrency) ?></p>
                     <span class="text-[11px] text-rose-600 font-medium block mt-0.5">نفقات تشغيلية وبنود</span>
                 </div>
                 <div class="w-11 h-11 rounded-xl bg-rose-100 text-rose-600 flex items-center justify-center text-lg shrink-0">
@@ -182,7 +207,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="bg-purple-50/70 border border-purple-200/80 rounded-2xl p-4 flex items-center justify-between">
                 <div>
                     <span class="text-xs font-bold text-purple-700 block">رواتب وأجور الموظفين</span>
-                    <p class="text-xl sm:text-2xl font-black text-purple-800 mt-1"><?= formatMoney($periodSalaries, $currency) ?></p>
+                    <p class="text-xl sm:text-2xl font-black text-purple-800 mt-1"><?= formatMoney($periodSalaries, $reportCurrency) ?></p>
                     <span class="text-[11px] text-purple-600 font-medium block mt-0.5">مسيرات الرواتب</span>
                 </div>
                 <div class="w-11 h-11 rounded-xl bg-purple-100 text-purple-600 flex items-center justify-center text-lg shrink-0">
@@ -193,7 +218,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="<?= $netCashFlow >= 0 ? 'bg-indigo-50/70 border-indigo-200/80 text-brand-800' : 'bg-amber-50/70 border-amber-200/80 text-amber-800' ?> border rounded-2xl p-4 flex items-center justify-between">
                 <div>
                     <span class="text-xs font-bold block">صافي التدفق النقدي</span>
-                    <p class="text-xl sm:text-2xl font-black mt-1"><?= formatMoney($netCashFlow, $currency) ?></p>
+                    <p class="text-xl sm:text-2xl font-black mt-1"><?= formatMoney($netCashFlow, $reportCurrency) ?></p>
                     <span class="text-[11px] font-bold block mt-0.5"><?= $netCashFlow >= 0 ? 'فائض سيولة إيجابي' : 'عجز سيولة' ?></span>
                 </div>
                 <div class="w-11 h-11 rounded-xl <?= $netCashFlow >= 0 ? 'bg-indigo-100 text-brand-600' : 'bg-amber-100 text-amber-600' ?> flex items-center justify-center text-lg shrink-0">

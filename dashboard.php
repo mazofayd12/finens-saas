@@ -289,9 +289,27 @@ if ($isSuper && empty($currentUser['active_company_id'])):
                     <i class="fa-solid fa-shield-halved text-white/50 text-xl"></i>
                 </div>
                 <p class="text-xs text-emerald-100 font-bold">الرصيد الفعلي المتوفر حالياً</p>
-                <h2 class="text-3xl sm:text-4xl font-black mt-2 tracking-tight">
-                    <?= formatMoney($safe['balance'], $currency) ?>
+                <h2 class="text-3xl sm:text-4xl font-black mt-2 tracking-tight dir-ltr text-right">
+                    <?= formatMoney($safe['balances'][$currency] ?? $safe['balance'], $currency) ?>
                 </h2>
+
+                <?php 
+                $dashBals = $safe['balances'] ?? [$currency => $safe['balance']];
+                $multiCurrs = array_filter($dashBals, fn($b) => abs($b) > 0.001);
+                if (count($multiCurrs) > 1 || !isset($multiCurrs[$currency])):
+                ?>
+                    <div class="mt-3 pt-3 border-t border-white/20">
+                        <span class="text-[10px] text-emerald-100 block mb-1.5 font-bold">توزيع الأرصدة حسب العملة:</span>
+                        <div class="flex flex-wrap gap-1.5">
+                            <?php foreach ($dashBals as $dCurr => $dBal): ?>
+                                <div class="bg-white/20 backdrop-blur-md rounded-xl px-2.5 py-1 border border-white/20 text-xs flex items-center space-x-1.5 space-x-reverse">
+                                    <span class="text-emerald-100 text-[11px] font-bold"><?= htmlspecialchars($dCurr) ?>:</span>
+                                    <span class="font-black text-white dir-ltr"><?= formatMoney($dBal, $dCurr) ?></span>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
             </div>
 
             <div class="relative z-10 pt-5 mt-4 border-t border-white/20 flex items-center justify-between text-xs">

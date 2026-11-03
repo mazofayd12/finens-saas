@@ -1,4 +1,4 @@
-const CACHE_NAME = 'finens-saas-v5';
+const CACHE_NAME = 'finens-saas-v6';
 const ASSETS_TO_CACHE = [
   './manifest.json',
   './assets/css/style.css',

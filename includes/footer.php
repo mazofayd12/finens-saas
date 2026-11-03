@@ -118,7 +118,12 @@ if (!empty($activeCompanyId)) {
                         </div>
                     </div>
                     <?php if (!empty($mainSafe)): ?>
-                        <p class="text-[11px] text-slate-500 mt-1">الرصيد المتاح بالخزنة: <span class="font-bold text-slate-700"><?= formatMoney($mainSafe['balance'], $currentUser['currency'] ?? 'ج.م') ?></span></p>
+                        <div class="text-[11px] text-slate-500 mt-1.5 flex flex-wrap items-center gap-1.5">
+                            <span>الرصيد المتاح بالخزنة:</span>
+                            <?php foreach (($mainSafe['balances'] ?? [$currentUser['currency'] ?? 'ج.م' => $mainSafe['balance']]) as $mCurr => $mBal): ?>
+                                <span class="font-black text-slate-800 bg-slate-100 px-2 py-0.5 rounded-md border border-slate-200 dir-ltr"><?= formatMoney($mBal, $mCurr) ?></span>
+                            <?php endforeach; ?>
+                        </div>
                     <?php endif; ?>
                 </div>
 

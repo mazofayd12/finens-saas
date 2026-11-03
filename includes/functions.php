@@ -44,10 +44,158 @@ function getCSRFInput(): string {
 }
 
 /**
- * Gets or creates the primary safe for a given company.
+ * Ensures the multi-currency safe balances table exists.
+ */
+function ensureSafeBalancesTable(): void {
+    static $ensured = false;
+    if ($ensured) return;
+    $db = getDBConnection();
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS safe_balances (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            safe_id INTEGER NOT NULL,
+            currency VARCHAR(20) NOT NULL,
+            balance DECIMAL(15, 2) NOT NULL DEFAULT 0.00,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(safe_id, currency)
+        )
+    ");
+    $ensured = true;
+}
+
+/**
+ * Returns associative array of currency => balance for a safe (e.g. ['ج.م' => 1000.00, '$' => 500.00])
+ */
+function getSafeBalances(int $safeId): array {
+    ensureSafeBalancesTable();
+    $db = getDBConnection();
+
+    $stmt = $db->prepare("SELECT currency, balance FROM safe_balances WHERE safe_id = :sid ORDER BY id ASC");
+    $stmt->execute([':sid' => $safeId]);
+    $rows = $stmt->fetchAll(PDO::FETCH_KEY_PAIR);
+
+    if (empty($rows)) {
+        // Automatically sync from safe_transactions if table is empty
+        $rows = syncSafeBalances($safeId);
+    }
+
+    return $rows;
+}
+
+/**
+ * Returns the balance of a specific currency in a safe
+ */
+function getSafeBalance(int $safeId, string $currency): float {
+    ensureSafeBalancesTable();
+    $db = getDBConnection();
+    $stmt = $db->prepare("SELECT balance FROM safe_balances WHERE safe_id = :sid AND currency = :curr LIMIT 1");
+    $stmt->execute([':sid' => $safeId, ':curr' => $currency]);
+    $val = $stmt->fetchColumn();
+    if ($val !== false && $val !== null) {
+        return (float)$val;
+    }
+
+    $all = syncSafeBalances($safeId);
+    return (float)($all[$currency] ?? 0.00);
+}
+
+/**
+ * Recalculates safe balances per currency from transaction history
+ */
+function syncSafeBalances(int $safeId): array {
+    ensureSafeBalancesTable();
+    $db = getDBConnection();
+
+    // Get company_id and default balance of safe
+    $safeStmt = $db->prepare("SELECT s.*, c.currency as company_currency FROM safes s LEFT JOIN companies c ON s.company_id = c.id WHERE s.id = :sid");
+    $safeStmt->execute([':sid' => $safeId]);
+    $safe = $safeStmt->fetch();
+    if (!$safe) return [];
+
+    $companyId = (int)$safe['company_id'];
+    $defaultCurrency = !empty($safe['company_currency']) ? $safe['company_currency'] : 'ج.م';
+
+    // Calculate net per currency from safe_transactions
+    $txStmt = $db->prepare("
+        SELECT currency,
+               COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END), 0) as net_bal
+        FROM safe_transactions
+        WHERE safe_id = :sid
+        GROUP BY currency
+    ");
+    $txStmt->execute([':sid' => $safeId]);
+    $results = $txStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $balances = [];
+    $now = date('Y-m-d H:i:s');
+
+    if (empty($results)) {
+        // No transactions: use the balance in safes table with default currency
+        $balances[$defaultCurrency] = (float)$safe['balance'];
+        $ins = $db->prepare("
+            INSERT INTO safe_balances (company_id, safe_id, currency, balance, updated_at)
+            VALUES (:cid, :sid, :curr, :bal, :now)
+            ON CONFLICT(safe_id, currency) DO UPDATE SET balance = :bal, updated_at = :now
+        ");
+        $ins->execute([
+            ':cid' => $companyId,
+            ':sid' => $safeId,
+            ':curr' => $defaultCurrency,
+            ':bal' => (float)$safe['balance'],
+            ':now' => $now
+        ]);
+    } else {
+        foreach ($results as $r) {
+            $curr = trim($r['currency']);
+            if (empty($curr)) $curr = $defaultCurrency;
+            $net = (float)$r['net_bal'];
+            $balances[$curr] = $net;
+
+            $ins = $db->prepare("
+                INSERT INTO safe_balances (company_id, safe_id, currency, balance, updated_at)
+                VALUES (:cid, :sid, :curr, :bal, :now)
+                ON CONFLICT(safe_id, currency) DO UPDATE SET balance = :bal, updated_at = :now
+            ");
+            $ins->execute([
+                ':cid' => $companyId,
+                ':sid' => $safeId,
+                ':curr' => $curr,
+                ':bal' => $net,
+                ':now' => $now
+            ]);
+        }
+    }
+
+    // Ensure default currency is represented
+    if (!isset($balances[$defaultCurrency])) {
+        $balances[$defaultCurrency] = 0.00;
+        $ins = $db->prepare("
+            INSERT INTO safe_balances (company_id, safe_id, currency, balance, updated_at)
+            VALUES (:cid, :sid, :curr, 0.00, :now)
+            ON CONFLICT(safe_id, currency) DO UPDATE SET balance = 0.00, updated_at = :now
+        ");
+        $ins->execute([
+            ':cid' => $companyId,
+            ':sid' => $safeId,
+            ':curr' => $defaultCurrency,
+            ':now' => $now
+        ]);
+    }
+
+    // Keep safes.balance updated to the default/primary currency balance
+    $updSafe = $db->prepare("UPDATE safes SET balance = :bal WHERE id = :sid");
+    $updSafe->execute([':bal' => (float)($balances[$defaultCurrency] ?? 0.00), ':sid' => $safeId]);
+
+    return $balances;
+}
+
+/**
+ * Gets or creates the primary safe for a given company with multi-currency balances attached.
  */
 function getCompanyMainSafe(int $companyId): array {
     $db = getDBConnection();
+    ensureSafeBalancesTable();
     $stmt = $db->prepare("SELECT * FROM safes WHERE company_id = :cid ORDER BY id ASC LIMIT 1");
     $stmt->execute([':cid' => $companyId]);
     $safe = $stmt->fetch();
@@ -57,7 +205,7 @@ function getCompanyMainSafe(int $companyId): array {
         $create = $db->prepare("INSERT INTO safes (company_id, name, balance, created_at) VALUES (:cid, 'الخزنة الرئيسية', 0.00, :now)");
         $create->execute([':cid' => $companyId, ':now' => $now]);
         $newId = (int)$db->lastInsertId();
-        return [
+        $safe = [
             'id' => $newId,
             'company_id' => $companyId,
             'name' => 'الخزنة الرئيسية',
@@ -66,11 +214,12 @@ function getCompanyMainSafe(int $companyId): array {
         ];
     }
 
+    $safe['balances'] = getSafeBalances((int)$safe['id']);
     return $safe;
 }
 
 /**
- * Executes a safe transaction (deposit, expense, salary) atomically with transaction lock.
+ * Executes a safe transaction (deposit, expense, salary) atomically per currency with lock.
  */
 function recordSafeTransaction(
     int $companyId,
@@ -88,11 +237,12 @@ function recordSafeTransaction(
     }
 
     $db = getDBConnection();
+    ensureSafeBalancesTable();
     $db->beginTransaction();
 
     try {
-        // Fetch current safe balance
-        $stmt = $db->prepare("SELECT balance FROM safes WHERE id = :sid AND company_id = :cid");
+        // Fetch current safe & company details
+        $stmt = $db->prepare("SELECT s.*, c.currency as company_currency FROM safes s LEFT JOIN companies c ON s.company_id = c.id WHERE s.id = :sid AND s.company_id = :cid");
         $stmt->execute([':sid' => $safeId, ':cid' => $companyId]);
         $safe = $stmt->fetch();
 
@@ -100,17 +250,39 @@ function recordSafeTransaction(
             throw new Exception('الخزنة المحددة غير موجودة.');
         }
 
-        $balanceBefore = (float)$safe['balance'];
+        $defaultCurrency = !empty($safe['company_currency']) ? $safe['company_currency'] : 'ج.م';
+        $currency = trim($currency ?: $defaultCurrency);
+
+        // Fetch current balance FOR THIS SPECIFIC CURRENCY
+        $currStmt = $db->prepare("SELECT balance FROM safe_balances WHERE safe_id = :sid AND currency = :curr LIMIT 1");
+        $currStmt->execute([':sid' => $safeId, ':curr' => $currency]);
+        $currRow = $currStmt->fetchColumn();
+
+        if ($currRow === false) {
+            // Check if there are transactions for this currency or calculate
+            $syncStmt = $db->prepare("
+                SELECT COALESCE(SUM(CASE WHEN type = 'deposit' THEN amount ELSE -amount END), 0)
+                FROM safe_transactions
+                WHERE safe_id = :sid AND currency = :curr
+            ");
+            $syncStmt->execute([':sid' => $safeId, ':curr' => $currency]);
+            $syncVal = $syncStmt->fetchColumn();
+            $balanceBefore = ($syncVal !== false && $syncVal !== null) ? (float)$syncVal : 0.00;
+        } else {
+            $balanceBefore = (float)$currRow;
+        }
 
         if ($type === 'deposit') {
             $balanceAfter = $balanceBefore + $amount;
         } else {
             // expense / salary / withdrawal
             if ($amount > $balanceBefore) {
-                throw new Exception('رصيد الخزنة لا يكفي لإتمام هذه العملية! الرصيد الحالي: ' . formatMoney($balanceBefore));
+                throw new Exception("رصيد الخزنة بالعملة ({$currency}) لا يكفي لإتمام هذه العملية! الرصيد المتاح: " . formatMoney($balanceBefore, $currency));
             }
             $balanceAfter = $balanceBefore - $amount;
         }
+
+        $now = date('Y-m-d H:i:s');
 
         // Insert transaction
         $ins = $db->prepare("
@@ -132,20 +304,37 @@ function recordSafeTransaction(
             ':ba' => $balanceAfter,
             ':desc' => $description,
             ':tdate' => $transactionDate,
-            ':now' => date('Y-m-d H:i:s')
+            ':now' => $now
         ]);
         $transactionId = (int)$db->lastInsertId();
 
-        // Update safe balance
-        $upd = $db->prepare("UPDATE safes SET balance = :ba WHERE id = :sid");
-        $upd->execute([':ba' => $balanceAfter, ':sid' => $safeId]);
+        // Update safe_balances table for this currency
+        $updBal = $db->prepare("
+            INSERT INTO safe_balances (company_id, safe_id, currency, balance, updated_at)
+            VALUES (:cid, :sid, :curr, :ba, :now)
+            ON CONFLICT(safe_id, currency) DO UPDATE SET balance = :ba, updated_at = :now
+        ");
+        $updBal->execute([
+            ':cid' => $companyId,
+            ':sid' => $safeId,
+            ':curr' => $currency,
+            ':ba' => $balanceAfter,
+            ':now' => $now
+        ]);
+
+        // If this currency is the company primary currency, also update safes.balance
+        if ($currency === $defaultCurrency) {
+            $updSafe = $db->prepare("UPDATE safes SET balance = :ba WHERE id = :sid");
+            $updSafe->execute([':ba' => $balanceAfter, ':sid' => $safeId]);
+        }
 
         $db->commit();
 
         return [
             'transaction_id' => $transactionId,
             'balance_before' => $balanceBefore,
-            'balance_after' => $balanceAfter
+            'balance_after' => $balanceAfter,
+            'currency' => $currency
         ];
     } catch (Exception $e) {
         $db->rollBack();
