@@ -65,6 +65,22 @@ function ensureSafeBalancesTable(): void {
 }
 
 /**
+ * Ensures payrolls table has currency column.
+ */
+function ensurePayrollCurrencyColumn(): void {
+    static $ensured = false;
+    if ($ensured) return;
+    try {
+        $db = getDBConnection();
+        $cols = $db->query("PRAGMA table_info(payrolls)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!empty($cols) && !in_array('currency', $cols)) {
+            $db->exec("ALTER TABLE payrolls ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م'");
+        }
+    } catch (Exception $e) {}
+    $ensured = true;
+}
+
+/**
  * Returns associative array of currency => balance for a safe (e.g. ['ج.م' => 1000.00, '$' => 500.00])
  */
 function getSafeBalances(int $safeId): array {
@@ -238,7 +254,12 @@ function recordSafeTransaction(
 
     $db = getDBConnection();
     ensureSafeBalancesTable();
-    $db->beginTransaction();
+
+    $startedTransaction = false;
+    if (!$db->inTransaction()) {
+        $db->beginTransaction();
+        $startedTransaction = true;
+    }
 
     try {
         // Fetch current safe & company details
@@ -328,7 +349,9 @@ function recordSafeTransaction(
             $updSafe->execute([':ba' => $balanceAfter, ':sid' => $safeId]);
         }
 
-        $db->commit();
+        if ($startedTransaction && $db->inTransaction()) {
+            $db->commit();
+        }
 
         return [
             'transaction_id' => $transactionId,
@@ -337,7 +360,9 @@ function recordSafeTransaction(
             'currency' => $currency
         ];
     } catch (Exception $e) {
-        $db->rollBack();
+        if ($startedTransaction && $db->inTransaction()) {
+            $db->rollBack();
+        }
         throw $e;
     }
 }
@@ -347,12 +372,12 @@ function recordSafeTransaction(
  */
 function getSupportedCurrencies(): array {
     return [
-        ['code' => 'ج.م', 'name' => 'جنيه مصري (EGP)', 'symbol' => 'ج.م'],
-        ['code' => '$', 'name' => 'دولار أمريكي (USD)', 'symbol' => '$'],
-        ['code' => 'ر.س', 'name' => 'ريال سعودي (SAR)', 'symbol' => 'ر.س'],
-        ['code' => '€', 'name' => 'يورو (EUR)', 'symbol' => '€'],
-        ['code' => 'د.إ', 'name' => 'درهم إماراتي (AED)', 'symbol' => 'د.إ'],
-        ['code' => 'د.ك', 'name' => 'دينار كويتي (KWD)', 'symbol' => 'د.ك'],
+        'ج.م' => 'جنيه مصري (EGP)',
+        '$' => 'دولار أمريكي (USD)',
+        'ر.س' => 'ريال سعودي (SAR)',
+        '€' => 'يورو (EUR)',
+        'د.إ' => 'درهم إماراتي (AED)',
+        'د.ك' => 'دينار كويتي (KWD)',
     ];
 }
 

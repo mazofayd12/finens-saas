@@ -7,6 +7,7 @@ $currentUser = getCurrentUser();
 $activeCompanyId = (int)$currentUser['active_company_id'];
 $currency = $currentUser['currency'] ?? 'ج.م';
 $db = getDBConnection();
+ensurePayrollCurrencyColumn();
 $safe = getCompanyMainSafe($activeCompanyId);
 
 $selectedMonth = $_GET['month'] ?? date('Y-m');
@@ -27,6 +28,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deductions = (float)($_POST['deductions'] ?? 0);
         $notes = trim($_POST['notes'] ?? '');
         $deductFromSafe = isset($_POST['deduct_from_safe']) ? 1 : 0;
+        $payCurrency = trim($_POST['currency'] ?? $currency);
 
         $netSalary = $baseSalary + $bonus - $deductions;
 
@@ -58,14 +60,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             'رواتب موظفين',
                             $netSalary,
                             "صرف راتب شهر {$monthYear} للموظف: {$empName}" . ($notes ? " ({$notes})" : ""),
-                            date('Y-m-d')
+                            date('Y-m-d'),
+                            $payCurrency
                         );
                         $safeTxId = $txResult['transaction_id'];
                     }
 
                     $insPay = $db->prepare("
-                        INSERT INTO payrolls (company_id, employee_id, user_id, month_year, base_salary, bonus, deductions, net_salary, status, paid_date, safe_transaction_id, notes, created_at)
-                        VALUES (:cid, :eid, :uid, :my, :base, :bon, :ded, :net, 'paid', :pdate, :txid, :notes, :now)
+                        INSERT INTO payrolls (company_id, employee_id, user_id, month_year, base_salary, bonus, deductions, net_salary, currency, status, paid_date, safe_transaction_id, notes, created_at)
+                        VALUES (:cid, :eid, :uid, :my, :base, :bon, :ded, :net, :curr, 'paid', :pdate, :txid, :notes, :now)
                     ");
                     $insPay->execute([
                         ':cid' => $activeCompanyId,
@@ -76,6 +79,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         ':bon' => $bonus,
                         ':ded' => $deductions,
                         ':net' => $netSalary,
+                        ':curr' => $payCurrency,
                         ':pdate' => date('Y-m-d'),
                         ':txid' => $safeTxId,
                         ':notes' => $notes,
@@ -83,7 +87,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ]);
 
                     $db->commit();
-                    setFlash('success', "تم صرف راتب الموظف {$empName} بمبلغ " . formatMoney($netSalary, $currency) . " بنجاح!");
+                    setFlash('success', "تم صرف راتب الموظف {$empName} بمبلغ " . formatMoney($netSalary, $payCurrency) . " بنجاح!");
                     header('Location: payroll.php?month=' . urlencode($monthYear));
                     exit;
                 } catch (Exception $e) {
@@ -149,10 +153,27 @@ require_once __DIR__ . '/includes/header.php';
         <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
             <div>
                 <p class="text-xs font-bold text-slate-500">إجمالي الرواتب المصروفة</p>
-                <p class="text-2xl font-black text-teal-600 mt-1"><?= formatMoney($totalMonthPayroll, $currency) ?></p>
-                <span class="text-[11px] text-slate-400">لشهر <?= htmlspecialchars($selectedMonth) ?></span>
+                <?php
+                $payrollTotalsByCurr = [];
+                foreach ($payrolls as $p) {
+                    $c = !empty($p['currency']) ? $p['currency'] : $currency;
+                    $payrollTotalsByCurr[$c] = ($payrollTotalsByCurr[$c] ?? 0.0) + (float)$p['net_salary'];
+                }
+                ?>
+                <?php if (empty($payrollTotalsByCurr)): ?>
+                    <p class="text-2xl font-black text-teal-600 mt-1"><?= formatMoney(0, $currency) ?></p>
+                <?php else: ?>
+                    <div class="mt-1 flex flex-wrap gap-2">
+                        <?php foreach ($payrollTotalsByCurr as $c => $total): ?>
+                            <span class="text-base sm:text-lg font-black text-teal-700 bg-teal-50 px-2.5 py-0.5 rounded-xl border border-teal-200">
+                                <?= formatMoney($total, $c) ?>
+                            </span>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+                <span class="text-[11px] text-slate-400 mt-1 block">لشهر <?= htmlspecialchars($selectedMonth) ?></span>
             </div>
-            <div class="w-12 h-12 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center text-xl">
+            <div class="w-12 h-12 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center text-xl shrink-0">
                 <i class="fa-solid fa-money-check-dollar"></i>
             </div>
         </div>
@@ -160,10 +181,22 @@ require_once __DIR__ . '/includes/header.php';
         <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
             <div>
                 <p class="text-xs font-bold text-slate-500">رصيد الخزنة المتاح</p>
-                <p class="text-2xl font-black text-emerald-600 mt-1"><?= formatMoney($safe['balance'], $currency) ?></p>
-                <span class="text-[11px] text-emerald-600 font-semibold">جاهز لصرف الرواتب</span>
+                <?php
+                $safeBals = $safe['balances'] ?? [$currency => $safe['balance']];
+                if (empty($safeBals)) {
+                    $safeBals = [$currency => 0.00];
+                }
+                ?>
+                <div class="mt-1 flex flex-wrap gap-2">
+                    <?php foreach ($safeBals as $sbCurr => $sbAmt): ?>
+                        <span class="text-base sm:text-lg font-black text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-xl border border-emerald-200">
+                            <?= formatMoney($sbAmt, $sbCurr) ?>
+                        </span>
+                    <?php endforeach; ?>
+                </div>
+                <span class="text-[11px] text-emerald-600 font-semibold mt-1 block">جاهز لصرف الرواتب</span>
             </div>
-            <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
+            <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl shrink-0">
                 <i class="fa-solid fa-vault"></i>
             </div>
         </div>
@@ -197,23 +230,25 @@ require_once __DIR__ . '/includes/header.php';
                             </td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($payrolls as $pay): ?>
+                        <?php foreach ($payrolls as $pay): 
+                            $pCurr = !empty($pay['currency']) ? $pay['currency'] : $currency;
+                        ?>
                             <tr class="hover:bg-slate-50/70 transition">
                                 <td class="p-4">
                                     <span class="font-extrabold text-slate-900 block"><?= htmlspecialchars($pay['employee_name']) ?></span>
                                     <span class="text-[11px] text-slate-400"><?= htmlspecialchars($pay['job_title'] ?: '') ?></span>
                                 </td>
                                 <td class="p-4 whitespace-nowrap font-medium text-slate-600">
-                                    <?= formatMoney($pay['base_salary'], $currency) ?>
+                                    <?= formatMoney($pay['base_salary'], $pCurr) ?>
                                 </td>
                                 <td class="p-4 whitespace-nowrap text-emerald-600 font-bold">
-                                    +<?= formatMoney($pay['bonus'], $currency) ?>
+                                    +<?= formatMoney($pay['bonus'], $pCurr) ?>
                                 </td>
                                 <td class="p-4 whitespace-nowrap text-rose-600 font-bold">
-                                    -<?= formatMoney($pay['deductions'], $currency) ?>
+                                    -<?= formatMoney($pay['deductions'], $pCurr) ?>
                                 </td>
                                 <td class="p-4 whitespace-nowrap font-black text-slate-900 text-sm">
-                                    <?= formatMoney($pay['net_salary'], $currency) ?>
+                                    <?= formatMoney($pay['net_salary'], $pCurr) ?>
                                 </td>
                                 <td class="p-4 whitespace-nowrap text-slate-500">
                                     <?= htmlspecialchars($pay['paid_date']) ?>
@@ -221,7 +256,7 @@ require_once __DIR__ . '/includes/header.php';
                                 <td class="p-4 whitespace-nowrap">
                                     <?php if (!empty($pay['safe_transaction_id'])): ?>
                                         <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                                            <i class="fa-solid fa-check ml-1"></i> خصم من الخزنة
+                                            <i class="fa-solid fa-check ml-1"></i> خصم من الخزنة (<?= htmlspecialchars($pCurr) ?>)
                                         </span>
                                     <?php else: ?>
                                         <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
@@ -263,9 +298,21 @@ require_once __DIR__ . '/includes/header.php';
                 </select>
             </div>
 
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">عن شهر</label>
-                <input type="month" name="month_year" value="<?= htmlspecialchars($selectedMonth) ?>" required class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">عن شهر</label>
+                    <input type="month" name="month_year" value="<?= htmlspecialchars($selectedMonth) ?>" required class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">العملة</label>
+                    <select name="currency" id="calc_currency" onchange="calculateNet()" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-teal-500 focus:outline-none">
+                        <?php foreach (getSupportedCurrencies() as $cCode => $cLabel): ?>
+                            <option value="<?= $cCode ?>" <?= $currency === $cCode ? 'selected' : '' ?>>
+                                <?= htmlspecialchars($cLabel) ?> (<?= htmlspecialchars($cCode) ?>)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
             </div>
 
             <div class="grid grid-cols-3 gap-2">
@@ -323,7 +370,9 @@ function calculateNet() {
     const bon = parseFloat(document.getElementById('calc_bonus').value) || 0;
     const d = parseFloat(document.getElementById('calc_deduct').value) || 0;
     const net = Math.max(0, b + bon - d);
-    document.getElementById('calc_net_display').innerText = net.toLocaleString('en-US', {minimumFractionDigits: 2}) + ' <?= $currency ?>';
+    const currSelect = document.getElementById('calc_currency');
+    const curr = currSelect ? currSelect.value : '<?= $currency ?>';
+    document.getElementById('calc_net_display').innerText = net.toLocaleString('en-US', {minimumFractionDigits: 2}) + ' ' + curr;
 }
 </script>
 
