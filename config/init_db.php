@@ -206,6 +206,13 @@ function ensureDatabaseTablesExist(): void {
         }
     } catch (Exception $e) {}
 
+    try {
+        $payCols = $db->query("PRAGMA table_info(payrolls)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('currency', $payCols)) {
+            $db->exec("ALTER TABLE payrolls ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م';");
+        }
+    } catch (Exception $e) {}
+
     // Seed data if no users exist
     $checkUser = $db->query("SELECT COUNT(*) as cnt FROM users")->fetch();
     if ($checkUser && (int)$checkUser['cnt'] === 0) {
