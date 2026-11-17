@@ -802,102 +802,102 @@ require_once __DIR__ . '/includes/header.php';
 </div>
 
 <!-- 1. ADD PROJECT MODAL -->
-<div id="add-project-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+<div id="add-project-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
     <div class="modal-backdrop fixed inset-0" onclick="closeModal('add-project-modal')"></div>
-    <div class="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-8 modal-animate-enter z-10 border border-slate-100">
-        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-5">
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center font-bold text-lg">
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[92vh] flex flex-col z-10 border border-slate-100 overflow-hidden modal-animate-enter">
+        
+        <!-- Modal Header -->
+        <div class="p-5 sm:p-6 pb-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-slate-50/50">
+            <div class="flex items-center space-x-3 space-x-reverse">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-amber-500/20">
                     <i class="fa-solid fa-city"></i>
                 </div>
                 <div>
-                    <h3 class="font-black text-slate-800 text-lg">إضافة مشروع عقاري جديد</h3>
-                    <p class="text-xs text-slate-400">تأسيس المشروع، تحديد رأس المال، وإنشاء خزنة مستقلة له</p>
+                    <h3 class="font-black text-slate-900 text-base sm:text-lg">تأسيس مشروع عقاري جديد</h3>
+                    <p class="text-xs text-slate-400">تحديد طبيعة المشروع، ضبط الميزانية والخزنة، وتكاليف الأرض إن وجدت</p>
                 </div>
             </div>
-            <button onclick="closeModal('add-project-modal')" class="text-slate-400 hover:text-slate-600 text-lg">
-                <i class="fa-solid fa-xmark"></i>
+            <button onclick="closeModal('add-project-modal')" class="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center transition">
+                <i class="fa-solid fa-xmark text-sm"></i>
             </button>
         </div>
 
-        <form action="projects.php" method="POST" class="space-y-4">
+        <!-- Form Body with Clean Scrolling -->
+        <form action="projects.php" method="POST" class="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
             <?= getCSRFInput() ?>
             <input type="hidden" name="action" value="create_project">
             <input type="hidden" id="modal_project_type" name="project_type" value="with_capital">
 
-            <!-- 1. Selection: Project Type (With Capital vs Without Capital) -->
+            <!-- 1. Project Type Selector -->
             <div>
-                <label class="block text-xs font-black text-slate-800 mb-2">نوع تمويل وطبيعة المشروع <span class="text-red-500">*</span></label>
+                <label class="block text-xs font-black text-slate-800 mb-2">نوع وطبيعة تمويل المشروع <span class="text-rose-500">*</span></label>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <!-- Option A: With Capital -->
-                    <div id="btn-type-with-cap" onclick="switchAddProjectType('with_capital')" class="cursor-pointer p-3.5 rounded-2xl border-2 border-amber-500 bg-amber-50/60 transition hover:shadow-xs flex flex-col justify-between">
-                        <div class="flex items-center space-x-2 space-x-reverse mb-1">
-                            <div class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm font-bold shadow-xs shrink-0">
-                                <i class="fa-solid fa-vault"></i>
+                    <div id="btn-type-with-cap" onclick="switchAddProjectType('with_capital')" class="cursor-pointer p-4 rounded-2xl border-2 border-amber-500 bg-amber-50/50 transition-all shadow-xs flex flex-col justify-between">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <div class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                                    <i class="fa-solid fa-vault"></i>
+                                </div>
+                                <span class="text-xs font-black text-slate-900">مشروع برأس مال محدد</span>
                             </div>
-                            <span class="text-xs font-black text-slate-900">مشروع برأس مال محدد</span>
+                            <span id="badge-type-with" class="w-2.5 h-2.5 rounded-full bg-amber-500"></span>
                         </div>
-                        <p class="text-[11px] text-slate-600 leading-tight pr-1">تحديد ميزانية ورأس مال معتمد، مع متابعة نسبة الاستهلاك والرصيد المتبقي بالخزنة.</p>
+                        <p class="text-[11px] text-slate-600 leading-relaxed">
+                            ميزانية ورأس مال معتمد للمشروع مع متابعة نسبة الاستهلاك والسيولة المتبقية بالخزنة.
+                        </p>
                     </div>
 
-                    <!-- Option B: Without Capital (Client Billable Expenses) -->
-                    <div id="btn-type-without-cap" onclick="switchAddProjectType('without_capital')" class="cursor-pointer p-3.5 rounded-2xl border-2 border-slate-200 bg-slate-50 transition hover:border-indigo-400 hover:shadow-xs flex flex-col justify-between">
-                        <div class="flex items-center space-x-2 space-x-reverse mb-1">
-                            <div class="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm font-bold shadow-xs shrink-0">
-                                <i class="fa-solid fa-file-invoice-dollar"></i>
+                    <!-- Option B: Without Capital -->
+                    <div id="btn-type-without-cap" onclick="switchAddProjectType('without_capital')" class="cursor-pointer p-4 rounded-2xl border-2 border-slate-200 bg-slate-50/60 transition-all hover:border-slate-300 flex flex-col justify-between">
+                        <div class="flex items-center justify-between mb-2">
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <div class="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                                    <i class="fa-solid fa-file-invoice-dollar"></i>
+                                </div>
+                                <span class="text-xs font-black text-slate-900">مشروع لحساب عميل</span>
                             </div>
-                            <span class="text-xs font-black text-slate-900">مشروع بدون رأس مال</span>
+                            <span id="badge-type-without" class="w-2.5 h-2.5 rounded-full bg-transparent border border-slate-300"></span>
                         </div>
-                        <p class="text-[11px] text-slate-600 leading-tight pr-1">مشروع مصروفات لحساب عميل؛ كل مصروف يسجل يظهر تلقائياً العميل المفروض يدفع كام.</p>
+                        <p class="text-[11px] text-slate-600 leading-relaxed">
+                            بدون ميزانية محددة مسبقاً؛ كل مصروف يُقيد تلقائياً على العميل لاستخراج المطالبات وكشوفات الحساب.
+                        </p>
                     </div>
                 </div>
             </div>
 
-            <!-- SECTION C: LAND & ACQUISITION COSTS (OPTIONAL) -->
-            <div class="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-2 space-x-reverse text-amber-900 font-black text-xs">
-                        <i class="fa-solid fa-map-location-dot text-amber-600 text-sm"></i>
-                        <span>تكاليف شراء وتوثيق الأرض (اختياري)</span>
+            <!-- 2. Core Project Info -->
+            <div class="space-y-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">اسم المشروع العقاري <span class="text-rose-500">*</span></label>
+                        <input type="text" name="name" required placeholder="مثال: مشروع عمارة التخصصي 19، فيلا الياسمين..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition">
                     </div>
-                    <span class="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">خاص بالمشاريع المتضمنة شراء أرض</span>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">كود المشروع <span class="text-[10px] text-slate-400 font-normal">(اختياري)</span></label>
+                        <input type="text" name="code" placeholder="مثال: PRJ-19" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition">
+                    </div>
                 </div>
-                <p class="text-[11px] text-slate-600 leading-tight">
-                    إذا كان المشروع يتضمن شراء أرض، يمكنك إدخال قيمتها وتوابعها هنا لتسجيلها تلقائياً كسندات صرف أولية للمشروع، أو اتركها فارغة إذا لم تكن مشتراة.
-                </p>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">موقع المشروع</label>
+                        <input type="text" name="location" placeholder="مثال: الرياض - حي النرجس" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ بدء المشروع</label>
+                        <input type="date" name="start_date" value="<?= date('Y-m-d') ?>" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3. Financial Setup (Dynamic Based on Type) -->
+            <!-- SECTION A: WITH CAPITAL -->
+            <div id="section-with-capital" class="space-y-3">
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة شراء الأرض (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_price" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة السعي / الدلالة (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_brokerage" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ضريبة التصرفات / الشراء (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_tax" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">اسم المشروع العقاري <span class="text-red-500">*</span></label>
-                    <input type="text" name="name" required placeholder="مثال: فيلا الياسمين، تشطيب شقة التجمع" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">كود المشروع (معرّف اختياري)</label>
-                    <input type="text" name="code" placeholder="مثال: PRJ-SLM" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm font-mono focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                </div>
-            </div>
-
-            <!-- SECTION A: WITH CAPITAL FIELDS -->
-            <div id="section-with-capital" class="space-y-4">
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div class="sm:col-span-2">
-                        <label class="block text-xs font-bold text-slate-700 mb-1">رأس المال المعتمد للمشروع <span class="text-red-500">*</span></label>
-                        <input type="number" step="0.01" min="0" id="input_capital" name="capital" required placeholder="0.00" class="w-full text-lg font-bold bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-blue-600 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">رأس المال المعتمد للمشروع <span class="text-rose-500">*</span></label>
+                        <input type="number" step="0.01" min="0" id="input_capital" name="capital" required placeholder="0.00" class="w-full text-base font-black font-mono bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-blue-600 focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">العملة</label>
@@ -911,44 +911,43 @@ require_once __DIR__ . '/includes/header.php';
                     </div>
                 </div>
 
-                <!-- Initial deposit toggle -->
-                <div class="p-3 bg-emerald-50 rounded-2xl border border-emerald-200">
-                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                <div class="p-3 bg-emerald-50/80 rounded-2xl border border-emerald-200">
+                    <label class="flex items-center space-x-2.5 space-x-reverse cursor-pointer">
                         <input type="checkbox" name="deposit_initial" value="1" checked class="rounded text-emerald-600 focus:ring-emerald-500 w-4 h-4">
-                        <span class="text-xs font-bold text-emerald-900">إيداع رأس المال فوراً في خزنة المشروع كرصيد افتتاحي لبدء الصرف منه</span>
+                        <span class="text-xs font-bold text-emerald-950">إيداع رأس المال فوراً في خزنة المشروع كرصيد افتتاحي لبدء الصرف منه</span>
                     </label>
                 </div>
             </div>
 
-            <!-- SECTION B: WITHOUT CAPITAL (CLIENT EXPENSES / BILLING) FIELDS -->
-            <div id="section-without-capital" class="hidden space-y-4">
-                <div class="p-3 bg-indigo-50/80 rounded-2xl border border-indigo-200 text-xs text-indigo-900 leading-relaxed flex items-start space-x-2 space-x-reverse">
-                    <i class="fa-solid fa-lightbulb text-indigo-600 text-sm mt-0.5 ml-1.5 shrink-0"></i>
+            <!-- SECTION B: WITHOUT CAPITAL (CLIENT BILLING) -->
+            <div id="section-without-capital" class="hidden space-y-3">
+                <div class="p-3 bg-indigo-50/70 rounded-2xl border border-indigo-200 text-xs text-indigo-900 leading-relaxed flex items-start space-x-2 space-x-reverse">
+                    <i class="fa-solid fa-circle-info text-indigo-600 text-sm mt-0.5 ml-1 shrink-0"></i>
                     <div>
-                        <strong class="font-black block">مشروع بدون رأس مال (مصروفات لحساب عميل):</strong>
-                        <span>كل مصروف تسجله على هذا المشروع (شراء مواد، مقاولات، فواتير...) يضاف تلقائياً لحساب العميل ليظهر لك صافي المبلغ المطلوب منه دفعه، مع إمكانية تحصيل دفعات منه وإصدار سندات قبض رسمية وكشف حساب A4.</span>
+                        <strong class="font-black block">مشروع مصروفات لحساب عميل:</strong>
+                        <span>كل مصروف ومشتريات تسجلها على هذا المشروع ستضاف تلقائياً لحساب العميل ليظهر صافي المبلغ المطلوب سداده بدقة مع دعم كشوف الحساب والمطالبات.</span>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">اسم العميل (صاحب المشروع) <span class="text-red-500">*</span></label>
-                        <input type="text" id="input_client_name" name="client_name" placeholder="مثال: أحمد عبد الله، م/ محمود كمال" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <label class="block text-xs font-bold text-slate-700 mb-1">اسم العميل (المالك) <span class="text-rose-500">*</span></label>
+                        <input type="text" id="input_client_name" name="client_name" placeholder="مثال: أحمد عبد الله، م/ فهد..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">رقم هاتف العميل (اختياري)</label>
-                        <input type="text" name="client_phone" placeholder="01xxxxxxxxx / 05xxxxxxxx" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm dir-ltr text-right focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+                        <input type="text" name="client_phone" placeholder="05xxxxxxxx" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition">
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                         <label class="block text-xs font-bold text-slate-700 mb-1">نسبة أتعاب الإشراف % (اختياري)</label>
-                        <input type="number" step="0.5" min="0" max="100" name="client_fee_percentage" placeholder="0%" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
-                        <span class="text-[10px] text-slate-400 mt-0.5 block">تضاف تلقائياً فوق قيمة المصروفات عند المطالبة (اتركها 0 إن لم توجد عمولة)</span>
+                        <input type="number" step="0.5" min="0" max="100" name="client_fee_percentage" placeholder="0%" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-indigo-700 focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none transition">
+                        <span class="text-[10px] text-slate-400 mt-1 block">تضاف فوق إجمالي المصروفات عند المطالبة (اتركها 0 إذا لم توجد نسبة)</span>
                     </div>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">عملة الحساب مع العميل</label>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">العملة</label>
                         <select name="currency_alt" onchange="document.querySelector('[name=currency]').value = this.value" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:outline-none">
                             <option value="ر.س" <?= $currency === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال سعودي)</option>
                             <option value="ج.م" <?= $currency === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه مصري)</option>
@@ -960,55 +959,55 @@ require_once __DIR__ . '/includes/header.php';
                 </div>
             </div>
 
-            <!-- SECTION C: LAND & ACQUISITION COSTS (OPTIONAL) -->
-            <div class="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-2 space-x-reverse text-amber-900 font-black text-xs">
-                        <i class="fa-solid fa-map-location-dot text-amber-600 text-sm"></i>
-                        <span>تكاليف شراء وتوثيق الأرض (اختياري)</span>
+            <!-- 4. LAND & ACQUISITION COSTS (APPEARS EXACTLY ONCE, HIGH-END DESIGN) -->
+            <div class="rounded-2xl border border-amber-200/90 bg-gradient-to-br from-amber-50/40 to-slate-50/60 p-4 space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2.5 border-b border-amber-200/60">
+                    <div class="flex items-center space-x-2.5 space-x-reverse">
+                        <div class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                            <i class="fa-solid fa-map-location-dot"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <span class="text-xs font-black text-slate-900">تكاليف شراء وتوثيق الأرض</span>
+                                <span class="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">اختياري</span>
+                            </div>
+                            <span class="text-[11px] text-slate-500 block">خاص بالمشاريع المتضمنة شراء أرض — اتركها 0 إذا كان المشروع إشراف وبناء فقط</span>
+                        </div>
                     </div>
-                    <span class="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">خاص بالمشاريع المتضمنة شراء أرض</span>
+                    <span id="land_live_total" class="text-xs font-black font-mono text-amber-700 bg-white px-3 py-1 rounded-xl border border-amber-200 shadow-2xs self-start sm:self-auto">
+                        الإجمالي: 0.00 ر.س
+                    </span>
                 </div>
-                <p class="text-[11px] text-slate-600 leading-tight">
-                    إذا كان المشروع يتضمن شراء أرض، يمكنك إدخال قيمتها وتوابعها هنا لتسجيلها تلقائياً كسندات صرف أولية للمشروع، أو اتركها فارغة إذا لم تكن مشتراة.
-                </p>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
                         <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة شراء الأرض (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_price" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <input type="number" step="0.01" min="0" id="input_land_price" name="land_price" placeholder="0.00" oninput="updateLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
-                    <div>
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
                         <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة السعي / الدلالة (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_brokerage" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <input type="number" step="0.01" min="0" id="input_land_brokerage" name="land_brokerage" placeholder="0.00" oninput="updateLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ضريبة التصرفات / الشراء (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_tax" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ضريبة التصرفات العقارية (ر.س)</label>
+                        <input type="number" step="0.01" min="0" id="input_land_tax" name="land_tax" placeholder="0.00" oninput="updateLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">موقع المشروع</label>
-                    <input type="text" name="location" placeholder="مثال: الرياض - حي النرجس" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ بدء المشروع</label>
-                    <input type="date" name="start_date" value="<?= date('Y-m-d') ?>" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                </div>
-            </div>
-
+            <!-- 5. Additional Notes -->
             <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">تفاصيل وملاحظات المشروع</label>
-                <textarea name="description" rows="2" placeholder="مواصفات المشروع، العقد، أو أي شروط خاصة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none"></textarea>
+                <label class="block text-xs font-bold text-slate-700 mb-1">تفاصيل وملاحظات المشروع <span class="text-[10px] text-slate-400 font-normal">(اختياري)</span></label>
+                <textarea name="description" rows="2" placeholder="مواصفات المشروع، العقد، أو أي شروط خاصة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition"></textarea>
             </div>
 
+            <!-- Modal Actions -->
             <div class="flex items-center space-x-2 space-x-reverse pt-2">
-                <button type="submit" class="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm">
-                    إنشاء المشروع والخزنة الآن
+                <button type="submit" class="flex-1 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-bold py-3 px-5 rounded-xl shadow-md shadow-amber-500/20 transition text-sm flex items-center justify-center">
+                    <i class="fa-solid fa-check ml-2"></i>
+                    <span>تأسيس المشروع والخزنة الآن</span>
                 </button>
-                <button type="button" onclick="closeModal('add-project-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-sm">
+                <button type="button" onclick="closeModal('add-project-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3 px-5 rounded-xl transition text-sm">
                     إلغاء
                 </button>
             </div>
@@ -1019,6 +1018,8 @@ require_once __DIR__ . '/includes/header.php';
                 const hiddenInput = document.getElementById('modal_project_type');
                 const btnWith = document.getElementById('btn-type-with-cap');
                 const btnWithout = document.getElementById('btn-type-without-cap');
+                const badgeWith = document.getElementById('badge-type-with');
+                const badgeWithout = document.getElementById('badge-type-without');
                 const secWith = document.getElementById('section-with-capital');
                 const secWithout = document.getElementById('section-without-capital');
                 const inputCap = document.getElementById('input_capital');
@@ -1027,10 +1028,11 @@ require_once __DIR__ . '/includes/header.php';
                 hiddenInput.value = type;
 
                 if (type === 'without_capital') {
-                    btnWithout.classList.remove('border-slate-200', 'bg-slate-50');
-                    btnWithout.classList.add('border-indigo-600', 'bg-indigo-50/60');
-                    btnWith.classList.remove('border-amber-500', 'bg-amber-50/60');
-                    btnWith.classList.add('border-slate-200', 'bg-slate-50');
+                    btnWithout.className = 'cursor-pointer p-4 rounded-2xl border-2 border-indigo-600 bg-indigo-50/50 transition-all shadow-xs flex flex-col justify-between';
+                    btnWith.className = 'cursor-pointer p-4 rounded-2xl border-2 border-slate-200 bg-slate-50/60 transition-all hover:border-slate-300 flex flex-col justify-between';
+                    
+                    badgeWithout.className = 'w-2.5 h-2.5 rounded-full bg-indigo-600';
+                    badgeWith.className = 'w-2.5 h-2.5 rounded-full bg-transparent border border-slate-300';
 
                     secWith.classList.add('hidden');
                     secWithout.classList.remove('hidden');
@@ -1038,16 +1040,28 @@ require_once __DIR__ . '/includes/header.php';
                     if (inputCap) inputCap.removeAttribute('required');
                     if (inputClient) inputClient.setAttribute('required', 'required');
                 } else {
-                    btnWith.classList.remove('border-slate-200', 'bg-slate-50');
-                    btnWith.classList.add('border-amber-500', 'bg-amber-50/60');
-                    btnWithout.classList.remove('border-indigo-600', 'bg-indigo-50/60');
-                    btnWithout.classList.add('border-slate-200', 'bg-slate-50');
+                    btnWith.className = 'cursor-pointer p-4 rounded-2xl border-2 border-amber-500 bg-amber-50/50 transition-all shadow-xs flex flex-col justify-between';
+                    btnWithout.className = 'cursor-pointer p-4 rounded-2xl border-2 border-slate-200 bg-slate-50/60 transition-all hover:border-slate-300 flex flex-col justify-between';
+                    
+                    badgeWith.className = 'w-2.5 h-2.5 rounded-full bg-amber-500';
+                    badgeWithout.className = 'w-2.5 h-2.5 rounded-full bg-transparent border border-slate-300';
 
                     secWith.classList.remove('hidden');
                     secWithout.classList.add('hidden');
 
                     if (inputCap) inputCap.setAttribute('required', 'required');
                     if (inputClient) inputClient.removeAttribute('required');
+                }
+            }
+
+            function updateLandTotalPreview() {
+                const p = parseFloat(document.getElementById('input_land_price')?.value || 0) || 0;
+                const b = parseFloat(document.getElementById('input_land_brokerage')?.value || 0) || 0;
+                const t = parseFloat(document.getElementById('input_land_tax')?.value || 0) || 0;
+                const total = p + b + t;
+                const badge = document.getElementById('land_live_total');
+                if (badge) {
+                    badge.textContent = 'الإجمالي: ' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ر.س';
                 }
             }
         </script>
@@ -1169,34 +1183,6 @@ require_once __DIR__ . '/includes/header.php';
                 </label>
                 <input type="file" name="invoice_file" accept=".jpg,.jpeg,.png,.webp,.pdf" class="w-full text-xs text-slate-600 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100">
                 <span class="text-[10px] text-slate-400">الملف سيتم حفظه تلقائياً وإتاحته للمعاينة مع السند</span>
-            </div>
-
-            <!-- SECTION C: LAND & ACQUISITION COSTS (OPTIONAL) -->
-            <div class="p-4 rounded-2xl bg-amber-50/60 border border-amber-200/80 space-y-3">
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center space-x-2 space-x-reverse text-amber-900 font-black text-xs">
-                        <i class="fa-solid fa-map-location-dot text-amber-600 text-sm"></i>
-                        <span>تكاليف شراء وتوثيق الأرض (اختياري)</span>
-                    </div>
-                    <span class="text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">خاص بالمشاريع المتضمنة شراء أرض</span>
-                </div>
-                <p class="text-[11px] text-slate-600 leading-tight">
-                    إذا كان المشروع يتضمن شراء أرض، يمكنك إدخال قيمتها وتوابعها هنا لتسجيلها تلقائياً كسندات صرف أولية للمشروع، أو اتركها فارغة إذا لم تكن مشتراة.
-                </p>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة شراء الأرض (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_price" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة السعي / الدلالة (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_brokerage" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ضريبة التصرفات / الشراء (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_tax" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                    </div>
-                </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -1882,28 +1882,40 @@ require_once __DIR__ . '/includes/header.php';
             </div>
 
             <!-- Land Costs Section (Optional) -->
-            <div class="p-3.5 bg-amber-50/70 border border-amber-200/80 rounded-2xl space-y-3">
-                <div class="flex items-center space-x-2 space-x-reverse">
-                    <div class="w-6 h-6 rounded-lg bg-amber-500 text-white flex items-center justify-center text-xs">
-                        <i class="fa-solid fa-map-location-dot"></i>
+            <div class="rounded-2xl border border-amber-200/90 bg-gradient-to-br from-amber-50/40 to-slate-50/60 p-4 space-y-3">
+                <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 pb-2.5 border-b border-amber-200/60">
+                    <div class="flex items-center space-x-2.5 space-x-reverse">
+                        <div class="w-8 h-8 rounded-xl bg-amber-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                            <i class="fa-solid fa-map-location-dot"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <span class="text-xs font-black text-slate-900">تكاليف شراء وتوثيق الأرض</span>
+                                <span class="text-[10px] font-bold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md">اختياري</span>
+                            </div>
+                            <span class="text-[11px] text-slate-500 block">خاص بالمشاريع المتضمنة شراء أرض — اتركها 0 إذا كان المشروع إشراف وبناء فقط</span>
+                        </div>
                     </div>
-                    <span class="text-xs font-black text-amber-950">تكاليف شراء وتوثيق الأرض (اختياري)</span>
+                    <?php 
+                    $editLandTotal = (float)($project['land_price'] ?? 0) + (float)($project['land_brokerage'] ?? 0) + (float)($project['land_tax'] ?? 0);
+                    ?>
+                    <span id="edit_land_live_total" class="text-xs font-black font-mono text-amber-700 bg-white px-3 py-1 rounded-xl border border-amber-200 shadow-2xs self-start sm:self-auto">
+                        الإجمالي: <?= formatMoney($editLandTotal, $projCurrency) ?>
+                    </span>
                 </div>
-                <p class="text-[11px] text-amber-800 leading-relaxed">
-                    إذا كان المشروع يتضمن شراء أرض، يمكنك تحديد قيمتها وتوابعها هنا، أو تركها 0 إذا كان المشروع إشراف وبناء فقط بدون شراء أرض.
-                </p>
-                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                    <div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
                         <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة شراء الأرض (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_price" value="<?= (float)($project['land_price'] ?? 0) ?>" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <input type="number" step="0.01" min="0" id="edit_input_land_price" name="land_price" value="<?= (float)($project['land_price'] ?? 0) ?>" placeholder="0.00" oninput="updateEditLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
-                    <div>
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
                         <label class="block text-[11px] font-bold text-slate-700 mb-1">قيمة السعي / الدلالة (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_brokerage" value="<?= (float)($project['land_brokerage'] ?? 0) ?>" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <input type="number" step="0.01" min="0" id="edit_input_land_brokerage" name="land_brokerage" value="<?= (float)($project['land_brokerage'] ?? 0) ?>" placeholder="0.00" oninput="updateEditLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
-                    <div>
+                    <div class="bg-white p-3 rounded-xl border border-slate-200/90 focus-within:border-amber-500 focus-within:ring-2 focus-within:ring-amber-500/20 transition">
                         <label class="block text-[11px] font-bold text-slate-700 mb-1">ضريبة التصرفات العقارية (ر.س)</label>
-                        <input type="number" step="0.01" min="0" name="land_tax" value="<?= (float)($project['land_tax'] ?? 0) ?>" placeholder="0.00" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        <input type="number" step="0.01" min="0" id="edit_input_land_tax" name="land_tax" value="<?= (float)($project['land_tax'] ?? 0) ?>" placeholder="0.00" oninput="updateEditLandTotalPreview()" class="w-full text-xs font-bold font-mono text-slate-900 bg-transparent focus:outline-none">
                     </div>
                 </div>
             </div>
@@ -2539,6 +2551,17 @@ function toggleEditProjectType(type) {
     } else {
         if (clientFields) clientFields.classList.add('hidden');
         if (capitalField) capitalField.classList.remove('hidden');
+    }
+}
+
+function updateEditLandTotalPreview() {
+    const p = parseFloat(document.getElementById('edit_input_land_price')?.value || 0) || 0;
+    const b = parseFloat(document.getElementById('edit_input_land_brokerage')?.value || 0) || 0;
+    const t = parseFloat(document.getElementById('edit_input_land_tax')?.value || 0) || 0;
+    const total = p + b + t;
+    const badge = document.getElementById('edit_land_live_total');
+    if (badge) {
+        badge.textContent = 'الإجمالي: ' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' <?= $projCurrency ?>';
     }
 }
 
