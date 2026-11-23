@@ -1,43 +1,170 @@
 <?php
 require_once __DIR__ . '/config/app.php';
-requireLogin();
 
-$currentUser = getCurrentUser();
-$activeCompanyId = (int)$currentUser['active_company_id'];
-$currency = $currentUser['currency'] ?? 'ج.م';
+$token = trim($_GET['token'] ?? '');
+$receiptId = (int)($_GET['id'] ?? 0);
 $db = getDBConnection();
 
-$receiptId = (int)($_GET['id'] ?? 0);
-if ($receiptId <= 0) {
-    die('رقم الإيصال غير محدد.');
-}
+$receipt = null;
 
-// Fetch receipt with company and receiver details
-$stmt = $db->prepare("
-    SELECT r.*, c.name as company_name, c.phone as company_phone, c.logo as company_logo, u.name as receiver_name
-    FROM receipts r
-    JOIN companies c ON r.company_id = c.id
-    LEFT JOIN users u ON r.user_id = u.id
-    WHERE r.id = :id AND r.company_id = :cid
-    LIMIT 1
-");
-$stmt->execute([':id' => $receiptId, ':cid' => $activeCompanyId]);
-$receipt = $stmt->fetch();
+// Allow access via sign_token (e.g. for customer) or logged-in user
+if (!empty($token)) {
+    $stmt = $db->prepare("
+        SELECT r.*, 
+               c.name as company_name, c.phone as company_phone, c.logo as company_logo,
+               c.tax_number as company_tax_number, c.cr_number as company_cr_number, c.address as company_address,
+               c.email as company_email, c.location_url as company_location, c.primary_color as company_primary_color,
+               c.city, c.district, c.street_name,
+               c.signature as company_signature, c.stamp as company_stamp,
+               p.name as project_name,
+               u.name as receiver_name, u.signature as issuer_user_sig
+        FROM receipts r
+        JOIN companies c ON r.company_id = c.id
+        LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN users u ON r.user_id = u.id
+        WHERE r.sign_token = :tok
+        LIMIT 1
+    ");
+    $stmt->execute([':tok' => $token]);
+    $receipt = $stmt->fetch();
+} elseif ($receiptId > 0) {
+    requireLogin();
+    $currentUser = getCurrentUser();
+    $activeCompanyId = (int)$currentUser['active_company_id'];
+
+    $whereClause = isSuperAdmin() ? "WHERE r.id = :id" : "WHERE r.id = :id AND r.company_id = :cid";
+    $params = isSuperAdmin() ? [':id' => $receiptId] : [':id' => $receiptId, ':cid' => $activeCompanyId];
+
+    $stmt = $db->prepare("
+        SELECT r.*, 
+               c.name as company_name, c.phone as company_phone, c.logo as company_logo,
+               c.tax_number as company_tax_number, c.cr_number as company_cr_number, c.address as company_address,
+               c.email as company_email, c.location_url as company_location, c.primary_color as company_primary_color,
+               c.city, c.district, c.street_name,
+               c.signature as company_signature, c.stamp as company_stamp,
+               p.name as project_name,
+               u.name as receiver_name, u.signature as issuer_user_sig
+        FROM receipts r
+        JOIN companies c ON r.company_id = c.id
+        LEFT JOIN projects p ON r.project_id = p.id
+        LEFT JOIN users u ON r.user_id = u.id
+        {$whereClause}
+        LIMIT 1
+    ");
+    $stmt->execute($params);
+    $receipt = $stmt->fetch();
+}
 
 if (!$receipt) {
-    die('الإيصال غير موجود أو ليس لديك صلاحية لعرضه.');
+    die('<div style="text-align:center;padding:50px;font-family:sans-serif;direction:rtl;"><h2>سند القبض غير موجود أو ليس لديك صلاحية لعرضه.</h2></div>');
 }
 
-$autoPrint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
+// Never auto print popup
+$autoPrint = false;
 
-$receiptCurrency = !empty($receipt['currency']) ? $receipt['currency'] : ($currentUser['currency'] ?? 'ج.م');
-$receiptPublicUrl = getReceiptPublicUrl($receipt);
+$navyPrimary = '#03254c';
+$receiptCurrency = !empty($receipt['currency']) ? $receipt['currency'] : 'ر.س';
+$taxNumber = !empty($receipt['company_tax_number']) ? $receipt['company_tax_number'] : '314899868200003';
+$crNumber = !empty($receipt['company_cr_number']) ? $receipt['company_cr_number'] : '';
 
-// 3 Voucher copy titles
-$copies = [
-    ['title' => 'أصل - نسخة العميل', 'color' => 'bg-emerald-50 text-emerald-800 border-emerald-300'],
-    ['title' => 'صورة - نسخة الحسابات والخزنة', 'color' => 'bg-indigo-50 text-indigo-800 border-indigo-300'],
-    ['title' => 'صورة - نسخة الأرشيف والسجلات', 'color' => 'bg-slate-100 text-slate-800 border-slate-300']
+$arabicAddress = !empty($receipt['company_address']) ? $receipt['company_address'] : 'القصيم - بريدة - طريق ابو بكر الصديق - حي النهضة';
+if (empty($receipt['company_address']) && !empty($receipt['city'])) {
+    $arabicAddress = $receipt['city'] . ' - ' . ($receipt['district'] ?: '') . ' - ' . ($receipt['street_name'] ?: '');
+}
+
+$phone1 = !empty($receipt['company_phone']) ? $receipt['company_phone'] : '0532125366';
+$email = !empty($receipt['company_email']) ? $receipt['company_email'] : 'dobalyoffice@gmail.com';
+$englishAddress = "Al-Qassim - Buraidah - Abu Bakr Al-Siddiq Road - Al-Nahda District - {$phone1} - 0547709948 - Email: {$email}";
+
+// Amount in words
+$amountWords = !empty($receipt['amount_words']) ? $receipt['amount_words'] : (function_exists('tafqeetNumber') ? tafqeetNumber((float)$receipt['amount'], $receiptCurrency) : ((float)$receipt['amount'] . ' ' . $receiptCurrency));
+
+// Dates
+$gregorianDate = $receipt['receipt_date'];
+$hijriDate = function_exists('getHijriDate') ? getHijriDate($gregorianDate) : '';
+
+// Number and Fraction split
+$numAmount = (float)$receipt['amount'];
+$wholePart = (int)floor($numAmount);
+$fractionPart = (int)round(($numAmount - $wholePart) * 100);
+$fractionStr = ($fractionPart > 0) ? sprintf('%02d', $fractionPart) : '—';
+$wholeStr = number_format($wholePart);
+
+// Currency labels
+$currLower = mb_strtolower($receiptCurrency);
+$isEgp = (str_contains($currLower, 'ج.م') || str_contains($currLower, 'egp') || str_contains($currLower, 'جنيه'));
+$minorLabel = $isEgp ? 'ق . P' : 'هـ . H';
+$majorLabel = $isEgp ? 'ج.م . EGP' : 'ريال . S.R';
+
+// Payment Method
+$pm = trim((string)$receipt['payment_method']);
+$pmLower = mb_strtolower($pm);
+$isCash = false;
+$isTransfer = false;
+$isPos = false;
+$isCheque = false;
+
+if (str_contains($pmLower, 'نقد') || str_contains($pmLower, 'كاش') || str_contains($pmLower, 'cash')) {
+    $isCash = true;
+} elseif (str_contains($pmLower, 'تحويل') || str_contains($pmLower, 'حوالة') || str_contains($pmLower, 'bank') || str_contains($pmLower, 'transfer')) {
+    $isTransfer = true;
+} elseif (str_contains($pmLower, 'شبك') || str_contains($pmLower, 'مدى') || str_contains($pmLower, 'pos') || str_contains($pmLower, 'بطاق')) {
+    $isPos = true;
+} elseif (str_contains($pmLower, 'شيك') || str_contains($pmLower, 'cheque') || str_contains($pmLower, 'check')) {
+    $isCheque = true;
+} else {
+    $isCash = true;
+}
+
+$bankName = $receipt['bank_name'] ?? '';
+$chequeNumber = $receipt['cheque_number'] ?? '';
+$chequeDate = $receipt['cheque_date'] ?? '';
+
+// Purpose & Project
+$purposeParts = [];
+if (!empty($receipt['purpose'])) {
+    $purposeParts[] = $receipt['purpose'];
+}
+if (!empty($receipt['project_name'])) {
+    $purposeParts[] = 'مشروع: ' . $receipt['project_name'];
+}
+if (!empty($receipt['notes'])) {
+    $purposeParts[] = '(' . $receipt['notes'] . ')';
+}
+$purposeText = !empty($purposeParts) ? implode(' - ', $purposeParts) : 'دفعة تحت الحساب';
+
+// QR Code url
+$qrUrl = function_exists('getReceiptPublicUrl') ? getReceiptPublicUrl($receipt) : (getAppBaseUrl() . '/receipt_sign.php?token=' . ($receipt['sign_token'] ?? ''));
+
+// Helper for Base64 Images (ensures print & PDF reliability)
+function getSafeBase64Image(?string $path): ?string {
+    if (empty($path)) return null;
+    if (strpos($path, 'data:image/') === 0) return $path;
+    $full = APP_PATH . '/' . ltrim($path, '/');
+    if (file_exists($full) && is_file($full)) {
+        $mime = mime_content_type($full) ?: 'image/png';
+        return "data:{$mime};base64," . base64_encode(file_get_contents($full));
+    }
+    return null;
+}
+
+// Signatures & Logos
+$logoBase64 = getSafeBase64Image($receipt['company_logo'] ?? '');
+$recipientSigBase64 = getSafeBase64Image($receipt['recipient_signature'] ?? '');
+$signedByName = $receipt['signed_by_name'] ?? ($receipt['customer_name'] ?? '');
+$signedAt = $receipt['signed_at'] ?? '';
+
+$rawIssuerSig = $receipt['issuer_signature'] ?: ($receipt['issuer_user_sig'] ?: ($receipt['company_signature'] ?: ''));
+$issuerSigBase64 = getSafeBase64Image($rawIssuerSig);
+$accountantName = $receipt['receiver_name'] ?? 'المحاسب المسؤول';
+
+// Single Official Voucher configuration for 1 A4 sheet
+$copy = [
+    'type' => 'original',
+    'badge' => 'سند أصلي معتمد',
+    'badge_en' => 'Official Original Voucher',
+    'badge_class' => 'copy-badge-original',
+    'qr_id' => 'qrcode-single'
 ];
 ?>
 <!DOCTYPE html>
@@ -45,85 +172,506 @@ $copies = [
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>طباعة إيصال استلام نقدية <?= htmlspecialchars($receipt['receipt_number']) ?> - 3 وصولات A4</title>
+    <title>سند قبض <?= htmlspecialchars($receipt['receipt_number']) ?> - <?= htmlspecialchars($receipt['company_name']) ?></title>
     
     <!-- Fonts & Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap" rel="stylesheet">
     
-    <!-- Tailwind CSS -->
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
 
+    <!-- QR Code Generator -->
+    <script src="assets/js/qrcode.min.js"></script>
+
     <style>
-        body {
-            font-family: 'Cairo', sans-serif;
-            background: #f1f5f9;
-            color: #0f172a;
+        * {
+            box-sizing: border-box;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
         }
 
+        body {
+            font-family: 'Cairo', sans-serif;
+            background: #e2e8f0;
+            color: #0f172a;
+            margin: 0;
+            padding: 0;
+        }
+
         @page {
             size: A4 portrait;
-            margin: 6mm 8mm;
+            margin: 0;
         }
 
+        /* The single A4 Page container containing exactly 1 official receipt voucher */
         .a4-page {
-            width: 194mm;
-            margin: 0 auto;
+            width: 210mm;
+            height: 296mm;
+            max-height: 296mm;
+            margin: 15px auto;
             background: #ffffff;
-            box-sizing: border-box;
-        }
-
-        .receipt-slip {
-            height: 87mm;
-            max-height: 87mm;
-            box-sizing: border-box;
-            border: 2px solid #1e293b;
-            border-radius: 10px;
-            padding: 8px 14px;
+            box-shadow: 0 15px 35px -5px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
             display: flex;
             flex-direction: column;
-            justify-content: space-between;
-            page-break-inside: avoid;
-            background: #ffffff;
+            justify-content: flex-start;
+            padding: 7mm 9mm;
             position: relative;
             overflow: hidden;
         }
 
-        .qr-code-box canvas,
-        .qr-code-box img {
-            width: 100% !important;
-            height: 100% !important;
-            display: block;
-            image-rendering: pixelated;
+        /* Single full A4 voucher slip */
+        .voucher-slip {
+            width: 100%;
+            height: 100%;
+            min-height: 280mm;
+            max-height: 282mm;
+            border: 2px solid #03254c;
+            border-radius: 12px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 7mm 9mm 0 9mm;
+            position: relative;
+            background: #ffffff;
+            overflow: hidden;
         }
 
-        .cut-line {
-            height: 7mm;
+        /* Watermark */
+        .slip-watermark {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            opacity: 0.038;
+            pointer-events: none;
+            z-index: 0;
+            max-width: 320px;
+            max-height: 320px;
+        }
+
+        .slip-content {
+            position: relative;
+            z-index: 2;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* 1. Slip Header (Right: Logo & Amount | Center: Title & Red Serial | Left: Company & Dates) */
+        .slip-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding-bottom: 3.5mm;
+            border-bottom: 1.5px solid #03254c;
+        }
+
+        /* Right column in RTL: Logo & Amount Card */
+        .header-right {
+            width: 33%;
+            display: flex;
+            align-items: center;
+            justify-content: flex-start;
+            gap: 10px;
+        }
+
+        .logo-wrapper {
+            max-width: 75px;
+            max-height: 65px;
             display: flex;
             align-items: center;
             justify-content: center;
-            position: relative;
         }
 
-        .cut-line::before {
-            content: '';
-            position: absolute;
-            left: 0;
-            right: 0;
-            top: 50%;
-            border-top: 1.5px dashed #94a3b8;
+        .logo-wrapper img {
+            max-width: 75px;
+            max-height: 65px;
+            object-fit: contain;
         }
 
-        .cut-badge {
+        /* Amount Card (هـ. H | ريال S.R) */
+        .amount-card {
+            display: inline-flex;
+            align-items: stretch;
+            border: 2px solid #03254c;
+            border-radius: 8px;
             background: #ffffff;
-            padding: 0 10px;
-            position: relative;
-            z-index: 1;
+            overflow: hidden;
+            direction: rtl;
+        }
+
+        .amt-unit {
+            padding: 3px 10px;
+            text-align: center;
+        }
+
+        .amt-unit.fraction {
+            border-left: 1px solid #94a3b8;
+            background: #f8fafc;
+            min-width: 42px;
+        }
+
+        .amt-unit.whole {
+            background: #f0f7ff;
+            min-width: 95px;
+        }
+
+        .amt-header {
             font-size: 10px;
+            font-weight: 800;
+            color: #475569;
+            border-bottom: 1px solid #cbd5e1;
+            padding-bottom: 1px;
+            line-height: 1.1;
+        }
+
+        .amt-digits {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 18px;
+            font-weight: 900;
+            color: #03254c;
+            padding-top: 1px;
+            line-height: 1.1;
+        }
+
+        /* Header Center: Title & Red Serial & Copy Badge */
+        .header-center {
+            width: 34%;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .voucher-title-main {
+            font-size: 26px;
+            font-weight: 900;
+            color: #03254c;
+            line-height: 1.1;
+            letter-spacing: -0.5px;
+        }
+
+        .voucher-title-sub {
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 2.5px;
+            color: #0b3b60;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            margin-top: 2px;
+        }
+
+        .serial-no-box {
+            margin-top: 3px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .serial-digits {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 19px;
+            font-weight: 900;
+            color: #dc2626;
+            letter-spacing: 0.5px;
+        }
+
+        .copy-pill {
+            font-size: 9.5px;
+            font-weight: 800;
+            padding: 2.5px 10px;
+            border-radius: 9999px;
+            margin-top: 3px;
+            display: inline-block;
+        }
+
+        .copy-badge-original {
+            background-color: #ecfdf5;
+            color: #065f46;
+            border: 1px solid #a7f3d0;
+        }
+
+        .copy-badge-archive {
+            background-color: #fffbeb;
+            color: #92400e;
+            border: 1px solid #fde68a;
+        }
+
+        /* Header Left in RTL: Company & Dates */
+        .header-left {
+            width: 33%;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            text-align: left;
+        }
+
+        .company-name-ar {
+            font-size: 15px;
+            font-weight: 900;
+            color: #03254c;
+            line-height: 1.25;
+            text-align: left;
+            width: 100%;
+        }
+
+        .company-name-en {
+            font-size: 9.5px;
+            font-weight: 700;
+            letter-spacing: 0.8px;
+            color: #475569;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            text-transform: uppercase;
+            margin-top: 2px;
+            text-align: left;
+            width: 100%;
+        }
+
+        .dates-box {
+            margin-top: 4px;
+            font-size: 11px;
+            color: #334155;
+            line-height: 1.45;
+            text-align: left;
+            width: 100%;
+        }
+
+        .dates-box strong {
+            color: #03254c;
+        }
+
+        /* 2. Classical Voucher Body Rows */
+        .voucher-body {
+            padding: 8mm 0 6mm 0;
+            display: flex;
+            flex-direction: column;
+            gap: 5.5mm;
+        }
+
+        .vch-line {
+            display: flex;
+            align-items: baseline;
+            font-size: 13px;
+            line-height: 1.35;
+            position: relative;
+        }
+
+        .vch-lbl-ar {
+            font-weight: 800;
+            color: #03254c;
+            white-space: nowrap;
+            margin-left: 8px;
+            font-size: 13px;
+        }
+
+        .vch-fill {
+            flex: 1;
+            border-bottom: 1.5px dotted #64748b;
+            padding: 0 8px 2px 8px;
+            min-height: 24px;
+            display: flex;
+            align-items: center;
+        }
+
+        .vch-fill-text {
+            color: #0f172a;
+            font-weight: 800;
+            font-size: 13.5px;
+        }
+
+        .vch-lbl-en {
+            font-size: 10.5px;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            font-weight: 700;
             color: #64748b;
-            font-weight: bold;
+            white-space: nowrap;
+            margin-right: 8px;
+            direction: ltr;
+        }
+
+        /* Payment methods row with checkboxes */
+        .pm-options-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 7px;
+            padding: 4px 10px;
+            font-size: 11px;
+            margin: 2mm 0;
+        }
+
+        .pm-checks {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+
+        .pm-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .pm-box {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border: 1.5px solid #03254c;
+            border-radius: 3px;
+            background: #ffffff;
+            font-size: 10px;
+            font-weight: 900;
+            color: #03254c;
+            line-height: 1;
+        }
+
+        .pm-box.active {
+            background: #03254c;
+            color: #ffffff;
+        }
+
+        .pm-label {
+            font-weight: 700;
+            color: #1e293b;
+        }
+
+        .pm-details {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-size: 10.5px;
+            color: #475569;
+        }
+
+        .pm-details strong {
+            color: #03254c;
+            border-bottom: 1px dotted #94a3b8;
+            padding: 0 3px;
+        }
+
+        /* 3. Signatures Section */
+        .slip-signatures {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 4mm 0 2mm 0;
+            border-top: 1.5px solid #e2e8f0;
+            margin-top: 3mm;
+        }
+
+        .sig-column {
+            width: 30%;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            min-height: 30mm;
+        }
+
+        .sig-head {
+            font-size: 12px;
+            font-weight: 800;
+            color: #03254c;
+            line-height: 1.1;
+        }
+
+        .sig-head .sig-en {
+            display: block;
+            font-size: 9px;
+            font-weight: 600;
+            color: #64748b;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+        }
+
+        .sig-slot {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 15mm;
+            position: relative;
+        }
+
+        .sig-img {
+            max-height: 14mm;
+            max-width: 80%;
+            object-fit: contain;
+        }
+
+        .sig-dots {
+            width: 75%;
+            margin: 0 auto;
+            border-bottom: 1.5px dotted #94a3b8;
+            height: 1px;
+        }
+
+        .sig-person {
+            font-size: 10.5px;
+            font-weight: 700;
+            color: #334155;
+            line-height: 1.25;
+        }
+
+        .sig-verified {
+            font-size: 9px;
+            font-weight: 800;
+            color: #059669;
+            display: block;
+        }
+
+        /* Mini QR in signature */
+        .mini-qr-box {
+            width: 10%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mini-qr-box canvas,
+        .mini-qr-box img {
+            width: 44px !important;
+            height: 44px !important;
+            display: block;
+        }
+
+        .mini-qr-caption {
+            font-size: 7.5px;
+            font-weight: 700;
+            color: #64748b;
+            margin-top: 2px;
+            text-align: center;
+        }
+
+        /* 4. Solid Deep Navy Footer Bar */
+        .slip-footer-bar {
+            background-color: #03254c !important;
+            color: #ffffff !important;
+            text-align: center;
+            padding: 5px 8px;
+            margin: 0 -9mm 0 -9mm;
+            border-radius: 0 0 10px 10px;
+        }
+
+        .footer-ar {
+            font-size: 11px;
+            font-weight: 800;
+            line-height: 1.25;
+            letter-spacing: 0.2px;
+        }
+
+        .footer-en {
+            font-size: 8.5px;
+            font-family: ui-sans-serif, system-ui, sans-serif;
+            opacity: 0.95;
+            line-height: 1.2;
+            direction: ltr;
         }
 
         @media print {
@@ -136,14 +684,22 @@ $copies = [
                 margin: 0 !important;
             }
             .a4-page {
+                width: 210mm !important;
+                height: 297mm !important;
+                max-height: 297mm !important;
+                margin: 0 !important;
+                padding: 6mm 8mm !important;
                 box-shadow: none !important;
                 border: none !important;
-                width: 100% !important;
-                margin: 0 !important;
-                padding: 0 !important;
+                page-break-after: avoid !important;
+                page-break-inside: avoid !important;
             }
-            .receipt-slip {
-                border-color: #000000 !important;
+            .voucher-slip {
+                width: 100% !important;
+                height: 100% !important;
+                min-height: 282mm !important;
+                max-height: 284mm !important;
+                page-break-inside: avoid !important;
             }
         }
     </style>
@@ -151,205 +707,260 @@ $copies = [
 <body class="py-6">
 
     <!-- Top Action Bar (Hidden on print) -->
-    <div class="no-print max-w-4xl mx-auto mb-6 px-4">
+    <div class="no-print max-w-4xl mx-auto mb-5 px-4">
         <div class="bg-white rounded-2xl p-4 shadow-lg border border-slate-200 flex flex-wrap items-center justify-between gap-3">
             <div class="flex items-center space-x-3 space-x-reverse">
-                <a href="receipts.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition flex items-center">
-                    <i class="fa-solid fa-arrow-right ml-1.5"></i>
-                    العودة لسجل الإيصالات
-                </a>
+                <?php if (isLoggedIn()): ?>
+                    <a href="receipts.php" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-3 py-2 rounded-xl text-xs transition flex items-center">
+                        <i class="fa-solid fa-arrow-right ml-1.5"></i>
+                        العودة لقائمة السندات
+                    </a>
+                <?php endif; ?>
                 <div>
-                    <h2 class="text-sm font-black text-slate-900">معاينة طباعة ورقة A4 (3 وصولات استلام فلوس)</h2>
-                    <span class="text-[11px] text-slate-500">رقم الإيصال الثابت: <strong><?= htmlspecialchars($receipt['receipt_number']) ?></strong></span>
+                    <h2 class="text-sm font-black text-slate-900">سند قبض مالي رسمي A4</h2>
+                    <span class="text-[11px] text-slate-500">رقم السند: <strong class="text-indigo-900 font-mono"><?= htmlspecialchars($receipt['receipt_number']) ?></strong></span>
                 </div>
             </div>
 
             <div class="flex items-center space-x-2 space-x-reverse">
-                <a href="<?= htmlspecialchars($receiptPublicUrl) ?>" target="_blank" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-3 py-2 rounded-xl text-xs transition flex items-center">
-                    <i class="fa-solid fa-arrow-up-right-from-square ml-1.5 text-xs"></i>
-                    فتح الفاتورة أونلاين
-                </a>
-                <button onclick="window.print()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-black px-5 py-2.5 rounded-xl shadow-md transition text-xs flex items-center">
+                <?php if (isLoggedIn()): ?>
+                    <a href="receipt_share.php?id=<?= (int)$receipt['id'] ?>" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold px-4 py-2.5 rounded-xl text-xs transition flex items-center">
+                        <i class="fa-solid fa-share-nodes ml-1.5"></i>
+                        رابط السند والتوقيع
+                    </a>
+                <?php endif; ?>
+                <button onclick="window.print()" class="text-white font-black px-6 py-2.5 rounded-xl shadow-md transition text-xs flex items-center" style="background-color: <?= $navyPrimary ?>;">
                     <i class="fa-solid fa-print ml-2 text-sm"></i>
-                    طباعة الورقة الآن (Print A4)
+                    طباعة سند القبض A4
                 </button>
             </div>
         </div>
     </div>
 
-    <!-- The Single A4 Printable Page Container -->
-    <div class="a4-page shadow-2xl p-0">
-        <?php foreach ($copies as $idx => $copy): ?>
-            <!-- RECEIPT SLIP -->
-            <div class="receipt-slip">
-                <!-- Watermark Background -->
-                <div class="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none select-none">
-                    <span class="text-7xl font-black text-slate-900 rotate-[-15deg]">إيصال استلام نقدية</span>
+    <!-- The Single A4 Sheet containing ONE official voucher -->
+    <div class="a4-page">
+
+            <!-- Single Voucher Slip -->
+            <div class="voucher-slip">
+
+                <!-- Watermark -->
+                <?php if (!empty($logoBase64)): ?>
+                    <img src="<?= $logoBase64 ?>" class="slip-watermark" alt="">
+                <?php endif; ?>
+
+                <div class="slip-content">
+
+                    <!-- 1. Header (Right: Logo & Amount | Center: Title & Serial | Left: Company & Dates) -->
+                    <div class="slip-header">
+                        
+                        <!-- Right: Logo & Amount Card -->
+                        <div class="header-right">
+                            <div class="logo-wrapper">
+                                <?php if (!empty($logoBase64)): ?>
+                                    <img src="<?= $logoBase64 ?>" alt="Logo">
+                                <?php else: ?>
+                                    <!-- Architectural building outline emblem (Matching Reference Image) -->
+                                    <svg class="w-10 h-10" viewBox="0 0 100 100" fill="none" stroke="#059669" stroke-width="3.5">
+                                        <rect x="25" y="25" width="50" height="55" rx="3" />
+                                        <path d="M15 45 L50 20 L85 45" />
+                                        <line x1="38" y1="50" x2="62" y2="50" stroke="#03254c" />
+                                        <line x1="38" y1="65" x2="62" y2="65" stroke="#03254c" />
+                                    </svg>
+                                <?php endif; ?>
+                            </div>
+                            <div class="amount-card">
+                                <div class="amt-unit fraction">
+                                    <div class="amt-header"><?= $minorLabel ?></div>
+                                    <div class="amt-digits"><?= $fractionStr ?></div>
+                                </div>
+                                <div class="amt-unit whole">
+                                    <div class="amt-header"><?= $majorLabel ?></div>
+                                    <div class="amt-digits"><?= $wholeStr ?></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Center: Title, Red Serial & Copy Badge -->
+                        <div class="header-center">
+                            <div class="voucher-title-main">سند قبض</div>
+                            <div class="voucher-title-sub">RECEIPT VOUCHER</div>
+                            <div class="serial-no-box">
+                                <span class="serial-digits"><?= htmlspecialchars($receipt['receipt_number']) ?></span>
+                            </div>
+                            <div>
+                                <span class="copy-pill <?= $copy['badge_class'] ?>"><?= $copy['badge'] ?> | <?= $copy['badge_en'] ?></span>
+                            </div>
+                        </div>
+
+                        <!-- Left: Company Name & Dates -->
+                        <div class="header-left">
+                            <div class="company-name-ar"><?= htmlspecialchars($receipt['company_name'] ?: 'مكتب النظم الهندسية للاستشارات') ?></div>
+                            <div class="company-name-en">ENGINEERING & CONSULTING OFFICE</div>
+                            <div class="dates-box">
+                                <div><strong>التاريخ:</strong> <?= htmlspecialchars($hijriDate) ?> هـ</div>
+                                <div><strong>الموافق:</strong> <?= htmlspecialchars($gregorianDate) ?> م</div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <!-- 2. Classical Fill-in Lines (Checkbook Style) -->
+                    <div class="voucher-body">
+
+                        <!-- Line 1: Received from -->
+                        <div class="vch-line">
+                            <div class="vch-lbl-ar">استلمنا من المكرم :</div>
+                            <div class="vch-fill">
+                                <span class="vch-fill-text"><?= htmlspecialchars($receipt['customer_name'] ?: '................................................') ?></span>
+                            </div>
+                            <div class="vch-lbl-en">Received from:</div>
+                        </div>
+
+                        <!-- Line 2: The Sum of -->
+                        <div class="vch-line">
+                            <div class="vch-lbl-ar">مبلغ وقدره :</div>
+                            <div class="vch-fill">
+                                <span class="vch-fill-text font-serif text-slate-800"><?= htmlspecialchars($amountWords) ?></span>
+                            </div>
+                            <div class="vch-lbl-en">The Sum of:</div>
+                        </div>
+
+                        <!-- Line 3: Payment method checkboxes & Bank info -->
+                        <div class="pm-options-row">
+                            <div class="pm-checks">
+                                <span class="pm-item">
+                                    <span class="pm-box <?= $isCash ? 'active' : '' ?>"><?= $isCash ? '✓' : '' ?></span>
+                                    <span class="pm-label">نقدًا Cash</span>
+                                </span>
+                                <span class="pm-item">
+                                    <span class="pm-box <?= $isTransfer ? 'active' : '' ?>"><?= $isTransfer ? '✓' : '' ?></span>
+                                    <span class="pm-label">تحويل Transfer</span>
+                                </span>
+                                <span class="pm-item">
+                                    <span class="pm-box <?= $isPos ? 'active' : '' ?>"><?= $isPos ? '✓' : '' ?></span>
+                                    <span class="pm-label">شبكة Network</span>
+                                </span>
+                                <span class="pm-item">
+                                    <span class="pm-box <?= $isCheque ? 'active' : '' ?>"><?= $isCheque ? '✓' : '' ?></span>
+                                    <span class="pm-label">شيك Check</span>
+                                </span>
+                            </div>
+                            <div class="pm-details">
+                                <span>على بنك To bank: <strong><?= htmlspecialchars($bankName ?: '—') ?></strong></span>
+                                <span>بتاريخ On Date: <strong><?= htmlspecialchars($chequeDate ?: '—') ?></strong></span>
+                                <?php if (!empty($chequeNumber)): ?>
+                                    <span>رقم Ref: <strong><?= htmlspecialchars($chequeNumber) ?></strong></span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- Line 4: And that for -->
+                        <div class="vch-line">
+                            <div class="vch-lbl-ar">وذلك مقابل :</div>
+                            <div class="vch-fill">
+                                <span class="vch-fill-text"><?= htmlspecialchars($purposeText) ?></span>
+                            </div>
+                            <div class="vch-lbl-en">And that for:</div>
+                        </div>
+
+                    </div>
+
+                    <!-- 3. Signatures Section -->
+                    <div class="slip-signatures">
+
+                        <!-- المستلم Receiver -->
+                        <div class="sig-column">
+                            <div class="sig-head">
+                                <span>المستلم</span>
+                                <span class="sig-en">Receiver</span>
+                            </div>
+                            <div class="sig-slot">
+                                <?php if (!empty($recipientSigBase64)): ?>
+                                    <img src="<?= $recipientSigBase64 ?>" class="sig-img" alt="Receiver Signature">
+                                <?php else: ?>
+                                    <div class="sig-dots"></div>
+                                <?php endif; ?>
+                            </div>
+                            <div class="sig-person">
+                                <span><?= htmlspecialchars($signedByName ?: ($receipt['customer_name'] ?: 'المستلم')) ?></span>
+                                <?php if (!empty($signedAt)): ?>
+                                    <span class="sig-verified">✓ موقّع إلكترونياً (<?= date('Y/m/d', strtotime($signedAt)) ?>)</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- المحاسب Accountant -->
+                        <div class="sig-column">
+                            <div class="sig-head">
+                                <span>المحاسب</span>
+                                <span class="sig-en">Accountant</span>
+                            </div>
+                            <div class="sig-slot">
+                                <div class="sig-dots"></div>
+                            </div>
+                            <div class="sig-person">
+                                <?= htmlspecialchars($accountantName) ?>
+                            </div>
+                        </div>
+
+                        <!-- المدير Manager -->
+                        <div class="sig-column">
+                            <div class="sig-head">
+                                <span>المدير</span>
+                                <span class="sig-en">Manager</span>
+                            </div>
+                            <div class="sig-slot">
+                                <?php if (!empty($issuerSigBase64)): ?>
+                                    <img src="<?= $issuerSigBase64 ?>" class="sig-img" alt="Manager Signature">
+                                <?php else: ?>
+                                    <div class="sig-dots"></div>
+                                <?php endif; ?>
+                            </div>
+                            <div class="sig-person">
+                                <span>المدير العام / الاعتماد</span>
+                                <?php if (!empty($issuerSigBase64)): ?>
+                                    <span class="sig-verified">✓ معتمد رسمياً</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+
+                        <!-- Mini QR Code Verification -->
+                        <div class="mini-qr-box">
+                            <div id="<?= $copy['qr_id'] ?>"></div>
+                            <div class="mini-qr-caption">تحقق إلكتروني</div>
+                        </div>
+
+                    </div>
+
                 </div>
 
-                <!-- Top Header: Logo + Title + Receipt ID & Date -->
-                <div class="flex items-center justify-between pb-2 border-b border-slate-300 relative z-10">
-                    <!-- Right: Company Info & Logo -->
-                    <div class="flex items-center space-x-3 space-x-reverse">
-                        <div class="h-16 w-24 max-h-16 rounded-xl bg-white border border-slate-300 flex items-center justify-center p-0.5 overflow-hidden shrink-0 shadow-2xs">
-                            <?php if (!empty($receipt['company_logo']) && file_exists(APP_PATH . '/' . $receipt['company_logo'])): ?>
-                                <img src="<?= htmlspecialchars($receipt['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full w-auto h-auto object-contain">
-                            <?php else: ?>
-                                <i class="fa-solid fa-building text-3xl text-slate-400"></i>
-                            <?php endif; ?>
-                        </div>
-                        <div>
-                            <h1 class="font-black text-slate-900 text-lg leading-tight"><?= htmlspecialchars($receipt['company_name']) ?></h1>
-                            <p class="text-[11px] text-slate-600 font-bold mt-0.5">
-                                <?= !empty($receipt['company_phone']) ? 'هاتف: ' . htmlspecialchars($receipt['company_phone']) : 'إيصال معتمد' ?>
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Center: Title Badge -->
-                    <div class="text-center">
-                        <div class="inline-block px-3 py-1 bg-slate-900 text-white font-black text-xs rounded-lg tracking-wider shadow-xs">
-                            إيصال استلام نقدية
-                        </div>
-                        <p class="text-[9px] font-bold text-slate-400 mt-0.5 tracking-widest uppercase">CASH RECEIPT VOUCHER</p>
-                    </div>
-
-                    <!-- Left: Receipt Permanent ID & Date & Copy Type -->
-                    <div class="text-left flex flex-col items-end">
-                        <span class="inline-block px-2 py-0.5 rounded text-[9px] font-black border <?= $copy['color'] ?> mb-1">
-                            <?= $copy['title'] ?>
-                        </span>
-                        <div class="text-xs font-mono font-black text-slate-900">
-                            رقم: <span class="text-rose-600 font-black text-sm"><?= htmlspecialchars($receipt['receipt_number']) ?></span>
-                        </div>
-                        <div class="text-[10px] font-bold text-slate-600 mt-0.5">
-                            التاريخ: <span class="font-mono"><?= htmlspecialchars($receipt['receipt_date']) ?></span>
-                        </div>
-                    </div>
+                <!-- 4. Solid Deep Navy Footer Bar -->
+                <div class="slip-footer-bar">
+                    <div class="footer-ar"><?= htmlspecialchars($arabicAddress) ?></div>
+                    <div class="footer-en"><?= htmlspecialchars($englishAddress) ?></div>
                 </div>
 
-                <!-- Middle Content Table / Form -->
-                <div class="py-2 space-y-1.5 text-xs text-slate-800 relative z-10 flex-1">
-                    <!-- Amount Highlight Banner -->
-                    <div class="flex items-center justify-between bg-slate-50 border border-slate-300 rounded-lg px-3 py-1.5">
-                        <div class="flex items-center space-x-2 space-x-reverse">
-                            <span class="font-extrabold text-slate-600 text-xs">المبلغ المستلم:</span>
-                            <span class="font-black text-base text-emerald-700 font-mono tracking-tight">
-                                <?= formatMoney($receipt['amount'], $receiptCurrency) ?>
-                            </span>
-                        </div>
-                        <div class="text-[11px] font-bold text-slate-700">
-                            طريقة الدفع: <span class="font-black text-slate-900"><?= htmlspecialchars($receipt['payment_method']) ?></span>
-                        </div>
-                    </div>
-
-                    <!-- Payer Line -->
-                    <div class="flex items-center text-xs">
-                        <span class="font-bold text-slate-600 w-36 shrink-0">استلمنا من السيد / السادة:</span>
-                        <span class="font-black text-slate-900 text-xs flex-1 border-b border-dotted border-slate-400 pb-0.5">
-                            <?= htmlspecialchars($receipt['customer_name']) ?>
-                            <?php if (!empty($receipt['customer_phone'])): ?>
-                                <span class="text-[10px] font-mono text-slate-600 mr-2">(هاتف: <?= htmlspecialchars($receipt['customer_phone']) ?>)</span>
-                            <?php endif; ?>
-                        </span>
-                    </div>
-
-                    <!-- Amount in words (Tafqeet) -->
-                    <div class="flex items-center text-xs">
-                        <span class="font-bold text-slate-600 w-36 shrink-0">مبلـغ وقـدره (كتابةً):</span>
-                        <span class="font-black text-indigo-900 text-xs flex-1 border-b border-dotted border-slate-400 pb-0.5">
-                            <?= htmlspecialchars($receipt['amount_words']) ?>
-                        </span>
-                    </div>
-
-                    <!-- Purpose / Reason -->
-                    <div class="flex items-start text-xs">
-                        <span class="font-bold text-slate-600 w-36 shrink-0">وذلـك عـن (البيان):</span>
-                        <span class="font-bold text-slate-900 text-xs flex-1 border-b border-dotted border-slate-400 pb-0.5 leading-snug">
-                            <?= htmlspecialchars($receipt['purpose']) ?>
-                            <?php if (!empty($receipt['notes'])): ?>
-                                <span class="text-slate-500 font-normal mr-1">- <?= htmlspecialchars($receipt['notes']) ?></span>
-                            <?php endif; ?>
-                        </span>
-                    </div>
-                </div>
-
-                <!-- Footer Signatures & Stamp -->
-                <div class="pt-2 border-t border-slate-300 relative z-10 grid grid-cols-4 gap-2 text-center text-[11px]">
-                    <!-- Receiver Name & Signature -->
-                    <div class="border-l border-slate-200 pl-1">
-                        <span class="text-slate-500 font-bold block text-[10px]">المستلم المسؤول</span>
-                        <span class="font-black text-slate-900 block truncate"><?= htmlspecialchars($receipt['receiver_name'] ?? 'معاذ') ?></span>
-                        <span class="text-slate-400 block text-[9px] mt-2">التوقيع: ....................</span>
-                    </div>
-
-                    <!-- Payer Signature -->
-                    <div class="border-l border-slate-200 pl-1">
-                        <span class="text-slate-500 font-bold block text-[10px]">توقيع الدافع (العميل)</span>
-                        <div class="h-4"></div>
-                        <span class="text-slate-400 block text-[9px] mt-2">التوقيع: ....................</span>
-                    </div>
-
-                    <!-- Accountant / Auditor / Stamp -->
-                    <div class="border-l border-slate-200 pl-1">
-                        <span class="text-slate-500 font-bold block text-[10px]">اعتماد الحسابات / الخاتم</span>
-                        <div class="h-3.5"></div>
-                        <span class="text-slate-400 block text-[9px] mt-1.5">الاعتماد: ....................</span>
-                    </div>
-
-                    <!-- QR Code Electronic Verification -->
-                    <div class="flex flex-col items-center justify-center">
-                        <div class="qr-code-box w-[82px] h-[82px] flex items-center justify-center bg-white border border-slate-400 rounded-lg p-1 shadow-2xs overflow-hidden" id="qr-code-slip-<?= $idx ?>">
-                            <img src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=1&data=<?= urlencode($receiptPublicUrl) ?>" alt="QR" class="w-full h-full object-contain qr-img">
-                        </div>
-                        <span class="text-slate-800 font-black block text-[8.5px] mt-0.5 leading-tight tracking-tighter whitespace-nowrap">
-                            <i class="fa-solid fa-qrcode text-brand-600 ml-0.5"></i> امسح للفاتورة أونلاين
-                        </span>
-                    </div>
-                </div>
             </div>
 
-            <!-- Scissors Cut Line between slips (only after slip 1 and 2) -->
-            <?php if ($idx < 2): ?>
-                <div class="cut-line">
-                    <span class="cut-badge">
-                        <i class="fa-solid fa-scissors ml-1 text-slate-400"></i> قص هنا (خط فصل الإيصالات)
-                    </span>
-                </div>
-            <?php endif; ?>
-        <?php endforeach; ?>
     </div>
 
-    <!-- QR Code Script -->
-    <script src="assets/js/qrcode.min.js"></script>
+    <!-- Generate QR Code via QRCode.js -->
     <script>
-        const targetUrl = "<?= $receiptPublicUrl ?>";
-        try {
-            document.querySelectorAll('.qr-code-box').forEach((box) => {
-                box.innerHTML = '';
-                new QRCode(box, {
-                    text: targetUrl,
-                    width: 76,
-                    height: 76,
-                    colorDark: "#000000",
+        document.addEventListener('DOMContentLoaded', function() {
+            var qrText = <?= json_encode($qrUrl) ?>;
+            var container = document.getElementById('qrcode-single');
+            if (container && typeof QRCode !== 'undefined') {
+                new QRCode(container, {
+                    text: qrText,
+                    width: 44,
+                    height: 44,
+                    colorDark: "#03254c",
                     colorLight: "#ffffff",
-                    correctLevel: QRCode.CorrectLevel.L
+                    correctLevel: QRCode.CorrectLevel.M
                 });
-            });
-        } catch (e) {
-            console.log('Using fallback QR image');
-        }
-    </script>
-
-    <?php if ($autoPrint): ?>
-    <script>
-        window.addEventListener('load', () => {
-            setTimeout(() => {
-                window.print();
-            }, 600);
+            }
         });
     </script>
-    <?php endif; ?>
 
 </body>
 </html>

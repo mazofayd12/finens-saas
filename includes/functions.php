@@ -1101,3 +1101,945 @@ function getOrCreateExpenseCategory(int $companyId, string $categoryName): ?int 
     }
 }
 
+
+/**
+ * Ensures audit_logs table exists and expenses table has edit tracking columns.
+ */
+function ensureAuditLogsTable(): void {
+    static $ensured = false;
+    if ($ensured) return;
+    $db = getDBConnection();
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            user_id INTEGER,
+            user_name TEXT,
+            user_role TEXT,
+            action TEXT NOT NULL,
+            module TEXT NOT NULL,
+            record_id INTEGER,
+            record_ref TEXT,
+            summary TEXT NOT NULL,
+            old_values TEXT,
+            new_values TEXT,
+            ip_address TEXT,
+            user_agent TEXT,
+            device_info TEXT,
+            created_at DATETIME NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_company ON audit_logs(company_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_module_record ON audit_logs(module, record_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+    ");
+
+    // Check expenses table columns
+    try {
+        $cols = $db->query("PRAGMA table_info(expenses)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('is_edited', $cols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN is_edited INTEGER DEFAULT 0");
+        }
+        if (!in_array('edit_count', $cols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN edit_count INTEGER DEFAULT 0");
+        }
+        if (!in_array('last_edited_by', $cols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN last_edited_by INTEGER DEFAULT NULL");
+        }
+        if (!in_array('last_edited_at', $cols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN last_edited_at DATETIME DEFAULT NULL");
+        }
+        if (!in_array('edit_reason', $cols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN edit_reason TEXT DEFAULT NULL");
+        }
+    } catch (Exception $e) {
+        // Silently continue if PRAGMA fails or columns already exist
+    }
+
+    $ensured = true;
+}
+
+/**
+ * Returns the client's real IP address.
+ */
+function getClientIP(): string {
+    $keys = [
+        'HTTP_CF_CONNECTING_IP',
+        'HTTP_X_FORWARDED_FOR',
+        'HTTP_CLIENT_IP',
+        'REMOTE_ADDR'
+    ];
+    foreach ($keys as $key) {
+        if (!empty($_SERVER[$key])) {
+            $ips = explode(',', $_SERVER[$key]);
+            $ip = trim($ips[0]);
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                return $ip;
+            }
+        }
+    }
+    return $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
+}
+
+/**
+ * Parses user agent string to return computer/device and browser in clear Arabic.
+ */
+function parseUserAgentString(?string $ua = null): string {
+    if ($ua === null) {
+        $ua = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    }
+    if (empty($ua)) {
+        return 'جهاز غير معروف';
+    }
+
+    // Platform / Device
+    $platform = 'كمبيوتر شخصي';
+    if (stripos($ua, 'Macintosh') !== false || stripos($ua, 'Mac OS X') !== false) {
+        $platform = 'كمبيوتر Mac (Apple)';
+    } elseif (stripos($ua, 'Windows NT 10.0') !== false) {
+        $platform = 'كمبيوتر Windows 10/11';
+    } elseif (stripos($ua, 'Windows') !== false) {
+        $platform = 'كمبيوتر Windows';
+    } elseif (stripos($ua, 'iPhone') !== false) {
+        $platform = 'هاتف iPhone';
+    } elseif (stripos($ua, 'iPad') !== false) {
+        $platform = 'جهاز iPad';
+    } elseif (stripos($ua, 'Android') !== false) {
+        $platform = 'هاتف Android';
+    } elseif (stripos($ua, 'Linux') !== false) {
+        $platform = 'كمبيوتر Linux';
+    }
+
+    // Browser
+    $browser = 'متصفح ويب';
+    if (stripos($ua, 'Edg/') !== false || stripos($ua, 'Edge/') !== false) {
+        $browser = 'Microsoft Edge';
+    } elseif (stripos($ua, 'Chrome/') !== false && stripos($ua, 'Edg/') === false) {
+        $browser = 'Google Chrome';
+    } elseif (stripos($ua, 'Firefox/') !== false) {
+        $browser = 'Mozilla Firefox';
+    } elseif (stripos($ua, 'Safari/') !== false && stripos($ua, 'Chrome/') === false) {
+        $browser = 'Apple Safari';
+    } elseif (stripos($ua, 'Opera') !== false || stripos($ua, 'OPR/') !== false) {
+        $browser = 'Opera';
+    }
+
+    return "{$platform} - {$browser}";
+}
+
+/**
+ * Records an entry into the audit_logs (Equals) system.
+ */
+function recordAuditLog(
+    int $companyId,
+    ?int $userId,
+    ?string $userName,
+    ?string $userRole,
+    string $action,
+    string $module,
+    ?int $recordId,
+    ?string $recordRef,
+    string $summary,
+    ?array $oldValues = null,
+    ?array $newValues = null,
+    ?string $ipAddress = null,
+    ?string $userAgent = null,
+    ?string $deviceInfo = null
+): int {
+    ensureAuditLogsTable();
+    $db = getDBConnection();
+
+    if ($ipAddress === null) {
+        $ipAddress = getClientIP();
+    }
+    if ($userAgent === null) {
+        $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    }
+    if ($deviceInfo === null) {
+        $deviceInfo = parseUserAgentString($userAgent);
+    }
+    $oldJson = $oldValues !== null ? json_encode($oldValues, JSON_UNESCAPED_UNICODE) : null;
+    $newJson = $newValues !== null ? json_encode($newValues, JSON_UNESCAPED_UNICODE) : null;
+    $now = date('Y-m-d H:i:s');
+
+    try {
+        $stmt = $db->prepare("
+            INSERT INTO audit_logs (
+                company_id, user_id, user_name, user_role, action, module,
+                record_id, record_ref, summary, old_values, new_values,
+                ip_address, user_agent, device_info, created_at
+            ) VALUES (
+                :cid, :uid, :uname, :urole, :act, :mod,
+                :rec_id, :rec_ref, :sum, :old_v, :new_v,
+                :ip, :ua, :dev, :created_at
+            )
+        ");
+        $stmt->execute([
+            ':cid' => $companyId,
+            ':uid' => $userId,
+            ':uname' => $userName,
+            ':urole' => $userRole,
+            ':act' => $action,
+            ':mod' => $module,
+            ':rec_id' => $recordId,
+            ':rec_ref' => $recordRef,
+            ':sum' => $summary,
+            ':old_v' => $oldJson,
+            ':new_v' => $newJson,
+            ':ip' => $ipAddress,
+            ':ua' => $userAgent,
+            ':dev' => $deviceInfo,
+            ':created_at' => $now
+        ]);
+        return (int)$db->lastInsertId();
+    } catch (Exception $e) {
+        error_log("Failed to insert audit log: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/**
+ * Fetches audit logs for a specific record.
+ */
+function getAuditLogsForRecord(string $module, int $recordId, int $companyId): array {
+    ensureAuditLogsTable();
+    $db = getDBConnection();
+    $stmt = $db->prepare("
+        SELECT * FROM audit_logs
+        WHERE module = :mod AND record_id = :rec_id AND company_id = :cid
+        ORDER BY id DESC
+    ");
+    $stmt->execute([
+        ':mod' => $module,
+        ':rec_id' => $recordId,
+        ':cid' => $companyId
+    ]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Edits an expense record with strict financial integrity and audit logging.
+ */
+function editExpenseRecord(int $expenseId, array $data, array $currentUser): array {
+    ensureAuditLogsTable();
+    $db = getDBConnection();
+    $companyId = (int)($currentUser['active_company_id'] ?? 0);
+
+    // 1. Fetch current expense
+    $stmt = $db->prepare("
+        SELECT e.*, c.name as category_name, p.name as project_name, u.name as creator_name
+        FROM expenses e
+        LEFT JOIN expense_categories c ON e.category_id = c.id
+        LEFT JOIN projects p ON e.project_id = p.id
+        LEFT JOIN users u ON e.user_id = u.id
+        WHERE e.id = :id AND e.company_id = :cid
+    ");
+    $stmt->execute([':id' => $expenseId, ':cid' => $companyId]);
+    $oldExp = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    if (!$oldExp) {
+        throw new Exception('سند الصرف أو المصروف المحدد غير موجود.');
+    }
+
+    // 2. Parse new values
+    $baseAmount = (float)($data['amount'] ?? 0);
+    if ($baseAmount <= 0) {
+        throw new Exception('يرجى إدخال مبلغ صحيح للصرف (أكبر من صفر).');
+    }
+
+    $title = trim($data['title'] ?? '');
+    if (empty($title)) {
+        throw new Exception('يرجى تحديد بيان وسبب الصرف.');
+    }
+
+    $expenseDate = trim($data['expense_date'] ?? date('Y-m-d'));
+    $expCurrency = trim($data['currency'] ?? $oldExp['currency']);
+    $description = trim($data['description'] ?? '');
+    $beneficiaryName = trim($data['beneficiary_name'] ?? '');
+    $beneficiaryId = trim($data['beneficiary_id_number'] ?? '');
+    $beneficiaryPhone = trim($data['beneficiary_phone'] ?? '');
+    $paymentMethod = trim($data['payment_method'] ?? ($oldExp['payment_method'] ?: 'نقدي'));
+    $chequeNumber = trim($data['cheque_number'] ?? '');
+    $bankName = trim($data['bank_name'] ?? '');
+    $chequeDate = trim($data['cheque_date'] ?? '');
+    $editReason = trim($data['edit_reason'] ?? '');
+
+    // VAT
+    $applyVat = !empty($data['apply_vat']);
+    $vatPercent = ($expCurrency === 'ج.م') ? 14.00 : 15.00;
+    $taxRate = $applyVat ? $vatPercent : 0.00;
+    $taxAmount = $applyVat ? round($baseAmount * ($vatPercent / 100), 2) : 0.00;
+    $totalAmount = round($baseAmount + $taxAmount, 2);
+
+    // Category
+    $categoryId = !empty($data['category_id']) ? (int)$data['category_id'] : null;
+    $newCategoryName = trim($data['new_category_name'] ?? '');
+    if (empty($categoryId) && !empty($newCategoryName)) {
+        $createdCatId = getOrCreateExpenseCategory($companyId, $newCategoryName);
+        if ($createdCatId) $categoryId = $createdCatId;
+    }
+    $catDisplayName = 'مصروف عام';
+    if ($categoryId) {
+        $catStmt = $db->prepare("SELECT name FROM expense_categories WHERE id = :id AND company_id = :cid");
+        $catStmt->execute([':id' => $categoryId, ':cid' => $companyId]);
+        $catDisplayName = $catStmt->fetchColumn() ?: 'مصروف عام';
+    }
+
+    // Attachment handling: supports deleting individual attachments AND adding new ones without replacing
+    ensureExpenseAttachmentsTable();
+    $attachmentPath = $oldExp['invoice_attachment'];
+    $newAttachmentUploaded = false;
+
+    // 1. Delete marked attachments if any
+    $deleteAttIds = $data['delete_attachment_ids'] ?? [];
+    if (!empty($deleteAttIds) && is_array($deleteAttIds)) {
+        foreach ($deleteAttIds as $delId) {
+            $delId = (int)$delId;
+            if ($delId > 0) {
+                $selStmt = $db->prepare("SELECT file_path FROM expense_attachments WHERE id = :id AND expense_id = :eid AND company_id = :cid");
+                $selStmt->execute([':id' => $delId, ':eid' => $expenseId, ':cid' => $companyId]);
+                $targetPath = $selStmt->fetchColumn();
+                if ($targetPath) {
+                    $fullPath = APP_PATH . '/' . ltrim($targetPath, '/');
+                    if (file_exists($fullPath) && is_file($fullPath)) {
+                        @unlink($fullPath);
+                    }
+                    $db->prepare("DELETE FROM expense_attachments WHERE id = :id AND expense_id = :eid AND company_id = :cid")->execute([
+                        ':id' => $delId,
+                        ':eid' => $expenseId,
+                        ':cid' => $companyId
+                    ]);
+                }
+            } elseif ($delId === 0 && !empty($oldExp['invoice_attachment'])) {
+                $fullPath = APP_PATH . '/' . ltrim($oldExp['invoice_attachment'], '/');
+                if (file_exists($fullPath) && is_file($fullPath)) {
+                    @unlink($fullPath);
+                }
+                $db->prepare("DELETE FROM expense_attachments WHERE expense_id = :eid AND company_id = :cid")->execute([
+                    ':eid' => $expenseId,
+                    ':cid' => $companyId
+                ]);
+            }
+        }
+    }
+
+    // 2. Append newly uploaded invoices (does NOT overwrite or delete existing ones)
+    $uploadFilesPayload = !empty($_FILES['invoice_files']['name']) ? $_FILES['invoice_files'] : (!empty($_FILES['invoice_file']['name']) ? $_FILES['invoice_file'] : null);
+    if (!empty($uploadFilesPayload)) {
+        $savedAtts = saveExpenseUploadedFiles($expenseId, $companyId, $uploadFilesPayload, !empty($oldExp['project_id']) ? (int)$oldExp['project_id'] : null);
+        if (!empty($savedAtts)) {
+            $newAttachmentUploaded = true;
+        }
+    }
+
+    // 3. Keep expenses.invoice_attachment synchronized to the first available attachment (or null if none)
+    $firstAttStmt = $db->prepare("SELECT file_path FROM expense_attachments WHERE expense_id = :eid ORDER BY id ASC LIMIT 1");
+    $firstAttStmt->execute([':eid' => $expenseId]);
+    $firstRemainingPath = $firstAttStmt->fetchColumn();
+    $attachmentPath = $firstRemainingPath ?: null;
+
+    // 3. Financial update: If already deducted from safe, update transaction and sync balances!
+    $oldTotal = (float)$oldExp['amount'];
+    $safeTxId = (int)($oldExp['safe_transaction_id'] ?? 0);
+    $safeId = (int)($oldExp['safe_id'] ?? 0);
+
+    $db->beginTransaction();
+    try {
+        if ($oldExp['status'] === 'deducted' && $safeTxId > 0 && $safeId > 0) {
+            $finalDesc = "سند صرف رقم " . ($oldExp['voucher_number'] ?: ('VCH-' . $expenseId)) . " إلى: " . ($beneficiaryName ?: 'غير محدد') . " - {$title}";
+            if (!empty($oldExp['project_name'])) {
+                $finalDesc .= " | مشروع: " . $oldExp['project_name'];
+            }
+            if ($applyVat) {
+                $finalDesc .= " (شامل ضريبة {$vatPercent}%: " . formatMoney($taxAmount, $expCurrency) . ")";
+            }
+
+            // Update the existing safe transaction amount and info
+            $updTx = $db->prepare("
+                UPDATE safe_transactions
+                SET amount = :amt,
+                    category = :cat,
+                    description = :desc,
+                    transaction_date = :tdate
+                WHERE id = :txid AND company_id = :cid
+            ");
+            $updTx->execute([
+                ':amt' => $totalAmount,
+                ':cat' => $catDisplayName,
+                ':desc' => $finalDesc,
+                ':tdate' => $expenseDate,
+                ':txid' => $safeTxId,
+                ':cid' => $companyId
+            ]);
+
+            // Re-sync safe balances accurately
+            syncSafeBalances($safeId);
+        }
+
+        // 4. Update the expense record
+        $now = date('Y-m-d H:i:s');
+        $updExp = $db->prepare("
+            UPDATE expenses
+            SET amount = :amt,
+                currency = :curr,
+                tax_rate = :trate,
+                tax_amount = :tamt,
+                title = :title,
+                description = :desc,
+                category_id = :cat_id,
+                expense_date = :edate,
+                beneficiary_name = :bname,
+                beneficiary_id_number = :bid,
+                beneficiary_phone = :bphone,
+                payment_method = :pmethod,
+                cheque_number = :cheque_no,
+                bank_name = :bank_name,
+                cheque_date = :cheque_date,
+                invoice_attachment = :attach,
+                is_edited = 1,
+                edit_count = COALESCE(edit_count, 0) + 1,
+                last_edited_by = :editor_id,
+                last_edited_at = :edited_at,
+                edit_reason = :ereason
+            WHERE id = :id AND company_id = :cid
+        ");
+        $updExp->execute([
+            ':amt' => $totalAmount,
+            ':curr' => $expCurrency,
+            ':trate' => $taxRate,
+            ':tamt' => $taxAmount,
+            ':title' => $title,
+            ':desc' => $description,
+            ':cat_id' => $categoryId,
+            ':edate' => $expenseDate,
+            ':bname' => $beneficiaryName,
+            ':bid' => $beneficiaryId,
+            ':bphone' => $beneficiaryPhone,
+            ':pmethod' => $paymentMethod,
+            ':cheque_no' => $chequeNumber,
+            ':bank_name' => $bankName,
+            ':cheque_date' => $chequeDate,
+            ':attach' => $attachmentPath,
+            ':editor_id' => $currentUser['id'],
+            ':edited_at' => $now,
+            ':ereason' => $editReason,
+            ':id' => $expenseId,
+            ':cid' => $companyId
+        ]);
+
+        // 5. Track diffs for audit log
+        $diffs = [];
+        if (abs($oldTotal - $totalAmount) > 0.001) {
+            $diffs[] = "المبلغ من (" . formatMoney($oldTotal, $oldExp['currency']) . ") إلى (" . formatMoney($totalAmount, $expCurrency) . ")";
+        }
+        if (trim((string)$oldExp['title']) !== $title) {
+            $diffs[] = "البيان من '{$oldExp['title']}' إلى '{$title}'";
+        }
+        if ($oldExp['expense_date'] !== $expenseDate) {
+            $diffs[] = "التاريخ من {$oldExp['expense_date']} إلى {$expenseDate}";
+        }
+        if ((int)($oldExp['category_id'] ?? 0) !== (int)$categoryId) {
+            $diffs[] = "التصنيف من '" . ($oldExp['category_name'] ?: 'مصروف عام') . "' إلى '{$catDisplayName}'";
+        }
+        if (trim((string)$oldExp['beneficiary_name']) !== $beneficiaryName) {
+            $diffs[] = "المستفيد من '" . ($oldExp['beneficiary_name'] ?: 'لا يوجد') . "' إلى '" . ($beneficiaryName ?: 'لا يوجد') . "'";
+        }
+        if (trim((string)$oldExp['payment_method']) !== $paymentMethod) {
+            $diffs[] = "طريقة الخصم من '" . ($oldExp['payment_method'] ?: 'غير محدد') . "' إلى '{$paymentMethod}'";
+        }
+        if ($newAttachmentUploaded) {
+            $diffs[] = "تم استبدال/إرفاق ملف فاتورة جديد";
+        }
+
+        $summaryText = "تعديل سند صرف رقم " . ($oldExp['voucher_number'] ?: ('VCH-' . $expenseId)) . ": " . (empty($diffs) ? "تحديث بيانات السند" : implode(' | ', $diffs));
+        if (!empty($editReason)) {
+            $summaryText .= " (سبب التعديل: {$editReason})";
+        }
+
+        $oldValues = [
+            'amount' => $oldTotal,
+            'currency' => $oldExp['currency'],
+            'tax_amount' => (float)$oldExp['tax_amount'],
+            'title' => $oldExp['title'],
+            'category_name' => $oldExp['category_name'] ?: 'مصروف عام',
+            'expense_date' => $oldExp['expense_date'],
+            'beneficiary_name' => $oldExp['beneficiary_name'],
+            'beneficiary_id_number' => $oldExp['beneficiary_id_number'],
+            'beneficiary_phone' => $oldExp['beneficiary_phone'],
+            'payment_method' => $oldExp['payment_method'],
+            'invoice_attachment' => $oldExp['invoice_attachment']
+        ];
+
+        $newValues = [
+            'amount' => $totalAmount,
+            'currency' => $expCurrency,
+            'tax_amount' => $taxAmount,
+            'title' => $title,
+            'category_name' => $catDisplayName,
+            'expense_date' => $expenseDate,
+            'beneficiary_name' => $beneficiaryName,
+            'beneficiary_id_number' => $beneficiaryId,
+            'beneficiary_phone' => $beneficiaryPhone,
+            'payment_method' => $paymentMethod,
+            'invoice_attachment' => $attachmentPath,
+            'edit_reason' => $editReason
+        ];
+
+        recordAuditLog(
+            $companyId,
+            (int)$currentUser['id'],
+            $currentUser['name'] ?? 'مستخدم',
+            $currentUser['role'] ?? 'user',
+            'edit',
+            'expenses',
+            $expenseId,
+            $oldExp['voucher_number'] ?: ('VCH-' . $expenseId),
+            $summaryText,
+            $oldValues,
+            $newValues
+        );
+
+        $db->commit();
+
+        return [
+            'success' => true,
+            'message' => 'تم تعديل السند وحفظ التغييرات في سجل الرقابة والتدقيق (Equals) وتحديث أرصدة الخزنة بنجاح!',
+            'voucher_number' => $oldExp['voucher_number'] ?: ('VCH-' . $expenseId)
+        ];
+    } catch (Exception $e) {
+        if ($db->inTransaction()) {
+            $db->rollBack();
+        }
+        throw $e;
+    }
+}
+
+/**
+ * Ensures project_blueprints table exists.
+ */
+function ensureProjectBlueprintsTable(): void {
+    static $ensured = false;
+    if ($ensured) return;
+    $db = getDBConnection();
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS project_blueprints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            project_id INTEGER NOT NULL,
+            user_id INTEGER,
+            title VARCHAR(255) NOT NULL,
+            blueprint_type VARCHAR(100) DEFAULT 'عام',
+            file_path TEXT NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_size INTEGER DEFAULT 0,
+            file_ext VARCHAR(20) DEFAULT '',
+            notes TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_project_blueprints_project ON project_blueprints(project_id);
+        CREATE INDEX IF NOT EXISTS idx_project_blueprints_company ON project_blueprints(company_id);
+    ");
+    $ensured = true;
+}
+
+/**
+ * Format bytes into human-readable string.
+ */
+function formatBytes($bytes, int $precision = 1): string {
+    $bytes = max((float)$bytes, 0);
+    $units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    $pow = floor(($bytes ? log($bytes) : 0) / log(1024));
+    $pow = min((int)$pow, count($units) - 1);
+    $bytes /= (1 << (10 * $pow));
+    return round($bytes, $precision) . ' ' . $units[$pow];
+}
+
+/**
+ * Retrieve blueprints for a specific project.
+ */
+function getProjectBlueprints(int $companyId, int $projectId): array {
+    ensureProjectBlueprintsTable();
+    $db = getDBConnection();
+    $stmt = $db->prepare("
+        SELECT b.*, u.name as uploader_name 
+        FROM project_blueprints b
+        LEFT JOIN users u ON b.user_id = u.id
+        WHERE b.company_id = :cid AND b.project_id = :pid
+        ORDER BY b.id DESC
+    ");
+    $stmt->execute([':cid' => $companyId, ':pid' => $projectId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Save a single blueprint uploaded file to project_blueprints.
+ */
+function saveProjectBlueprintFile(
+    int $companyId,
+    int $projectId,
+    ?int $userId,
+    array $fileItem,
+    string $title = '',
+    string $type = 'عام',
+    string $notes = ''
+): ?int {
+    if (empty($fileItem['name']) || ($fileItem['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return null;
+    }
+
+    ensureProjectBlueprintsTable();
+    $db = getDBConnection();
+
+    $originalName = basename($fileItem['name']);
+    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+
+    $allowedExts = [
+        'pdf', 'dwg', 'dxf', 'cad', 'rvt', 'ifc',
+        'png', 'jpg', 'jpeg', 'webp', 'svg', 'bmp',
+        'zip', 'rar', '7z', 'tar', 'gz',
+        'doc', 'docx', 'xls', 'xlsx'
+    ];
+
+    if (!in_array($ext, $allowedExts)) {
+        throw new InvalidArgumentException("صيغة الملف ({$ext}) غير مدعومة للمخططات الهندسية.");
+    }
+
+    $uploadDir = APP_PATH . '/uploads/projects/blueprints/';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0777, true);
+    }
+
+    // Clean title
+    $rawBaseName = pathinfo($originalName, PATHINFO_FILENAME);
+    $finalTitle = trim($title) !== '' ? trim($title) : $rawBaseName;
+    $finalType = trim($type) !== '' ? trim($type) : 'عام';
+
+    // Unique filename
+    $safeName = preg_replace('/[^A-Za-z0-9_\-\.]/', '_', $rawBaseName);
+    if (empty($safeName)) {
+        $safeName = 'blueprint';
+    }
+    $newFileName = 'bp_' . $projectId . '_' . time() . '_' . rand(100, 999) . '_' . substr($safeName, 0, 40) . '.' . $ext;
+    $targetPath = $uploadDir . $newFileName;
+
+    if (!move_uploaded_file($fileItem['tmp_name'], $targetPath)) {
+        throw new RuntimeException("فشل في حفظ الملف على السيرفر.");
+    }
+
+    $relPath = 'uploads/projects/blueprints/' . $newFileName;
+    $fileSize = (int)($fileItem['size'] ?? (file_exists($targetPath) ? filesize($targetPath) : 0));
+
+    $stmt = $db->prepare("
+        INSERT INTO project_blueprints (
+            company_id, project_id, user_id, title, blueprint_type,
+            file_path, file_name, file_size, file_ext, notes, created_at
+        ) VALUES (
+            :cid, :pid, :uid, :title, :btype,
+            :fpath, :fname, :fsize, :fext, :notes, :created
+        )
+    ");
+    $stmt->execute([
+        ':cid' => $companyId,
+        ':pid' => $projectId,
+        ':uid' => $userId,
+        ':title' => $finalTitle,
+        ':btype' => $finalType,
+        ':fpath' => $relPath,
+        ':fname' => $originalName,
+        ':fsize' => $fileSize,
+        ':fext' => $ext,
+        ':notes' => $notes ?: null,
+        ':created' => date('Y-m-d H:i:s')
+    ]);
+
+    return (int)$db->lastInsertId();
+}
+
+/**
+ * Save multiple blueprint files uploaded via standard PHP array format.
+ */
+function saveMultipleProjectBlueprints(
+    int $companyId,
+    int $projectId,
+    ?int $userId,
+    array $filesArray,
+    string $defaultType = 'عام',
+    string $notes = ''
+): int {
+    if (empty($filesArray['name']) || !is_array($filesArray['name'])) {
+        return 0;
+    }
+
+    $count = 0;
+    $totalFiles = count($filesArray['name']);
+    for ($i = 0; $i < $totalFiles; $i++) {
+        if (($filesArray['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_OK) {
+            $singleFile = [
+                'name' => $filesArray['name'][$i],
+                'type' => $filesArray['type'][$i] ?? '',
+                'tmp_name' => $filesArray['tmp_name'][$i],
+                'error' => $filesArray['error'][$i],
+                'size' => $filesArray['size'][$i] ?? 0
+            ];
+            try {
+                $savedId = saveProjectBlueprintFile($companyId, $projectId, $userId, $singleFile, '', $defaultType, $notes);
+                if ($savedId) $count++;
+            } catch (Exception $e) {
+                // Ignore single file error, continue with other files
+            }
+        }
+    }
+    return $count;
+}
+
+/**
+ * Delete a blueprint record and its physical file.
+ */
+function deleteProjectBlueprint(int $companyId, int $blueprintId): bool {
+    ensureProjectBlueprintsTable();
+    $db = getDBConnection();
+    $stmt = $db->prepare("SELECT * FROM project_blueprints WHERE id = :id AND company_id = :cid");
+    $stmt->execute([':id' => $blueprintId, ':cid' => $companyId]);
+    $bp = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$bp) {
+        return false;
+    }
+
+    // Delete physical file
+    if (!empty($bp['file_path'])) {
+        $fullPath = APP_PATH . '/' . ltrim($bp['file_path'], '/');
+        if (file_exists($fullPath) && is_file($fullPath)) {
+            @unlink($fullPath);
+        }
+    }
+
+    $del = $db->prepare("DELETE FROM project_blueprints WHERE id = :id AND company_id = :cid");
+    return $del->execute([':id' => $blueprintId, ':cid' => $companyId]);
+}
+
+/**
+ * Ensures expense_attachments table exists.
+ */
+function ensureExpenseAttachmentsTable(): void {
+    static $ensured = false;
+    if ($ensured) return;
+    $db = getDBConnection();
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS expense_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            expense_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            project_id INTEGER NULL,
+            file_path TEXT NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_size INTEGER DEFAULT 0,
+            file_ext VARCHAR(20) DEFAULT '',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_expense_attachments_expense ON expense_attachments(expense_id);
+        CREATE INDEX IF NOT EXISTS idx_expense_attachments_company ON expense_attachments(company_id);
+        CREATE INDEX IF NOT EXISTS idx_expense_attachments_project ON expense_attachments(project_id);
+    ");
+
+    // Auto-backfill existing invoice_attachment values from expenses table into expense_attachments
+    try {
+        $legacy = $db->query("
+            SELECT e.id, e.company_id, e.project_id, e.invoice_attachment, e.created_at
+            FROM expenses e
+            WHERE e.invoice_attachment IS NOT NULL 
+              AND e.invoice_attachment != ''
+              AND NOT EXISTS (
+                  SELECT 1 FROM expense_attachments ea WHERE ea.expense_id = e.id
+              )
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
+        if (!empty($legacy)) {
+            $insStmt = $db->prepare("
+                INSERT INTO expense_attachments (
+                    expense_id, company_id, project_id, file_path, file_name, file_size, file_ext, created_at
+                ) VALUES (
+                    :eid, :cid, :pid, :fpath, :fname, :fsize, :fext, :created_at
+                )
+            ");
+            foreach ($legacy as $leg) {
+                $cPath = ltrim($leg['invoice_attachment'], '/');
+                $full = APP_PATH . '/' . $cPath;
+                $ext = strtolower(pathinfo($cPath, PATHINFO_EXTENSION));
+                $size = (file_exists($full) && is_file($full)) ? filesize($full) : 0;
+                $insStmt->execute([
+                    ':eid' => $leg['id'],
+                    ':cid' => $leg['company_id'],
+                    ':pid' => $leg['project_id'],
+                    ':fpath' => $cPath,
+                    ':fname' => basename($cPath),
+                    ':fsize' => $size,
+                    ':fext' => $ext,
+                    ':created_at' => $leg['created_at'] ?: date('Y-m-d H:i:s')
+                ]);
+            }
+        }
+    } catch (Exception $e) {
+        // Silently continue if query fails
+    }
+
+    $ensured = true;
+}
+
+/**
+ * Save multiple or single uploaded invoice files for an expense.
+ *
+ * @param int $expenseId
+ * @param int $companyId
+ * @param array $filesInput (Either $_FILES['invoice_files'] or $_FILES['invoice_file'])
+ * @param int|null $projectId
+ * @return array Array of saved attachment records
+ */
+function saveExpenseUploadedFiles(int $expenseId, int $companyId, array $filesInput, ?int $projectId = null): array {
+    ensureExpenseAttachmentsTable();
+    $db = getDBConnection();
+    $savedRecords = [];
+
+    if (empty($filesInput) || empty($filesInput['name'])) {
+        return $savedRecords;
+    }
+
+    $uploadDir = APP_PATH . '/assets/uploads/invoices';
+    if (!is_dir($uploadDir)) {
+        mkdir($uploadDir, 0777, true);
+    }
+
+    $allowedExts = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
+
+    // Normalize $_FILES structure: handle both single and multiple file uploads
+    $isMultiple = is_array($filesInput['name']);
+    $fileCount = $isMultiple ? count($filesInput['name']) : 1;
+
+    for ($i = 0; $i < $fileCount; $i++) {
+        $error = $isMultiple ? $filesInput['error'][$i] : $filesInput['error'];
+        if ($error !== UPLOAD_ERR_OK) {
+            continue;
+        }
+
+        $tmpName = $isMultiple ? $filesInput['tmp_name'][$i] : $filesInput['tmp_name'];
+        $origName = $isMultiple ? $filesInput['name'][$i] : $filesInput['name'];
+        $size = $isMultiple ? (int)$filesInput['size'][$i] : (int)$filesInput['size'];
+        $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+
+        if (!in_array($ext, $allowedExts)) {
+            continue;
+        }
+
+        $prefix = $projectId ? "inv_prj_{$projectId}_" : "inv_exp_{$expenseId}_";
+        $newFileName = $prefix . time() . '_' . rand(1000, 9999) . '.' . $ext;
+        $destPath = $uploadDir . '/' . $newFileName;
+
+        if (move_uploaded_file($tmpName, $destPath)) {
+            $relPath = 'assets/uploads/invoices/' . $newFileName;
+
+            $ins = $db->prepare("
+                INSERT INTO expense_attachments (
+                    expense_id, company_id, project_id, file_path, file_name, file_size, file_ext, created_at
+                ) VALUES (
+                    :eid, :cid, :pid, :fpath, :fname, :fsize, :fext, :now
+                )
+            ");
+            $now = date('Y-m-d H:i:s');
+            $ins->execute([
+                ':eid' => $expenseId,
+                ':cid' => $companyId,
+                ':pid' => $projectId,
+                ':fpath' => $relPath,
+                ':fname' => $origName,
+                ':fsize' => $size,
+                ':fext' => $ext,
+                ':now' => $now
+            ]);
+
+            $savedRecords[] = [
+                'id' => (int)$db->lastInsertId(),
+                'expense_id' => $expenseId,
+                'file_path' => $relPath,
+                'file_name' => $origName,
+                'file_size' => $size,
+                'file_ext' => $ext
+            ];
+        }
+    }
+
+    // Keep expenses.invoice_attachment in sync with the first attachment for full backward compatibility
+    if (!empty($savedRecords) && $expenseId > 0) {
+        $firstPath = $savedRecords[0]['file_path'];
+        $db->prepare("
+            UPDATE expenses 
+            SET invoice_attachment = COALESCE(NULLIF(invoice_attachment, ''), :att) 
+            WHERE id = :id AND company_id = :cid
+        ")->execute([
+            ':att' => $firstPath,
+            ':id' => $expenseId,
+            ':cid' => $companyId
+        ]);
+    }
+
+    return $savedRecords;
+}
+
+/**
+ * Retrieve all invoice attachments for an expense.
+ */
+function getExpenseAttachments(int $expenseId, ?string $fallbackPath = null): array {
+    ensureExpenseAttachmentsTable();
+    $db = getDBConnection();
+
+    $stmt = $db->prepare("
+        SELECT * FROM expense_attachments 
+        WHERE expense_id = :eid 
+        ORDER BY id ASC
+    ");
+    $stmt->execute([':eid' => $expenseId]);
+    $items = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($items) && !empty($fallbackPath)) {
+        $cleanPath = ltrim($fallbackPath, '/');
+        $fullPath = APP_PATH . '/' . $cleanPath;
+        $ext = strtolower(pathinfo($cleanPath, PATHINFO_EXTENSION));
+        $items[] = [
+            'id' => 0,
+            'expense_id' => $expenseId,
+            'file_path' => $cleanPath,
+            'file_name' => basename($cleanPath),
+            'file_size' => (file_exists($fullPath) && is_file($fullPath)) ? filesize($fullPath) : 0,
+            'file_ext' => $ext,
+            'created_at' => null
+        ];
+    }
+
+    return $items;
+}
+
+/**
+ * Batch fetch attachments for multiple expense IDs.
+ */
+function getBatchExpenseAttachments(array $expenseIds): array {
+    if (empty($expenseIds)) return [];
+    ensureExpenseAttachmentsTable();
+    $db = getDBConnection();
+
+    $placeholders = implode(',', array_fill(0, count($expenseIds), '?'));
+    $stmt = $db->prepare("
+        SELECT * FROM expense_attachments 
+        WHERE expense_id IN ($placeholders) 
+        ORDER BY id ASC
+    ");
+    $stmt->execute(array_values($expenseIds));
+    $all = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $grouped = [];
+    foreach ($all as $item) {
+        $grouped[$item['expense_id']][] = $item;
+    }
+    return $grouped;
+}

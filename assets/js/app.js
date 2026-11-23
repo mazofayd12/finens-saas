@@ -94,6 +94,16 @@ window.closeMobileFabMenu = function() {
 
 // Modal Helpers
 function openModal(modalId) {
+    if (modalId === 'quick-expense-modal') {
+        window.location.href = 'expense_create.php';
+        return;
+    }
+    if (modalId === 'quick-project-expense-modal') {
+        const urlParams = new URLSearchParams(window.location.search);
+        const pId = urlParams.get('id') || '';
+        window.location.href = 'expense_create.php?source=project' + (pId ? '&project_id=' + pId : '');
+        return;
+    }
     const modal = document.getElementById(modalId);
     if (modal) {
         modal.classList.remove('hidden');

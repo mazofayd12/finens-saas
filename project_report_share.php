@@ -73,6 +73,13 @@ $expStmt = $db->prepare($query);
 $expStmt->execute($params);
 $expenses = $expStmt->fetchAll();
 
+// Batch fetch all attachments for these expenses (supports multiple invoices)
+$allExpIds = array_column($expenses, 'id');
+$expenseAttachmentsGrouped = getBatchExpenseAttachments($allExpIds);
+
+ensureProjectBlueprintsTable();
+$blueprints = getProjectBlueprints((int)$companyId, (int)$projectId);
+
 // Calculations
 $totalExpenses = 0;
 $totalTax = 0;
@@ -290,6 +297,10 @@ if (!empty($repIds)) {
             <i class="fa-solid fa-images ml-1.5 text-indigo-600"></i>
             معرض صور وفيديوهات الموقع (<?= count($allProjectPhotos) ?> صورة)
         </button>
+        <button onclick="switchClientTab('client-tab-blueprints')" id="btn-client-tab-blueprints" class="flex-1 min-w-[140px] py-2.5 px-3 rounded-xl bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center justify-center transition">
+            <i class="fa-solid fa-compass-drafting ml-1.5 text-cyan-600"></i>
+            المخططات الهندسية (<?= count($blueprints) ?>)
+        </button>
     </div>
 
     <!-- TAB 1: FINANCIAL EXPENSES & AUDIT -->
@@ -471,25 +482,49 @@ if (!empty($repIds)) {
                                     <?php endif; ?>
                                 </td>
 
-                                <!-- 7: Receipt Attachment Picture -->
+                                <!-- 7: Receipt Attachment Picture (Single or Multiple) -->
                                 <td class="p-3.5 whitespace-nowrap text-center">
-                                    <?php if (!empty($row['invoice_attachment']) && file_exists(APP_PATH . '/' . $row['invoice_attachment'])): ?>
-                                        <?php $ext = strtolower(pathinfo($row['invoice_attachment'], PATHINFO_EXTENSION)); ?>
-                                        <?php if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])): ?>
-                                            <button type="button" onclick="showReceiptImage('<?= htmlspecialchars($row['invoice_attachment']) ?>', '<?= htmlspecialchars(addslashes($row['title'])) ?>')" class="group relative inline-block">
-                                                <img src="<?= htmlspecialchars($row['invoice_attachment']) ?>" alt="صورة الإيصال" class="w-12 h-12 object-cover rounded-xl border border-slate-300 group-hover:scale-105 transition shadow-xs">
+                                    <?php 
+                                    $rowAtts = $expenseAttachmentsGrouped[$row['id']] ?? [];
+                                    if (empty($rowAtts) && !empty($row['invoice_attachment']) && file_exists(APP_PATH . '/' . $row['invoice_attachment'])) {
+                                        $rowAtts = [
+                                            [
+                                                'id' => 0,
+                                                'file_path' => $row['invoice_attachment'],
+                                                'file_name' => basename($row['invoice_attachment']),
+                                                'file_ext' => strtolower(pathinfo($row['invoice_attachment'], PATHINFO_EXTENSION))
+                                            ]
+                                        ];
+                                    }
+                                    $attCount = count($rowAtts);
+                                    ?>
+                                    <?php if ($attCount === 0): ?>
+                                        <span class="text-slate-300 text-[11px]">بدون مرفق</span>
+                                    <?php elseif ($attCount === 1): ?>
+                                        <?php $singleAtt = $rowAtts[0]; ?>
+                                        <?php if (in_array($singleAtt['file_ext'], ['jpg', 'jpeg', 'png', 'webp'])): ?>
+                                            <button type="button" onclick="showReceiptImage('<?= htmlspecialchars($singleAtt['file_path']) ?>', '<?= htmlspecialchars(addslashes($row['title'])) ?>')" class="group relative inline-block">
+                                                <img src="<?= htmlspecialchars($singleAtt['file_path']) ?>" alt="صورة الإيصال" class="w-12 h-12 object-cover rounded-xl border border-slate-300 group-hover:scale-105 transition shadow-xs">
                                                 <span class="absolute inset-0 bg-slate-900/30 rounded-xl opacity-0 group-hover:opacity-100 flex items-center justify-center text-white text-xs transition">
                                                     <i class="fa-solid fa-magnifying-glass-plus"></i>
                                                 </span>
                                             </button>
                                         <?php else: ?>
-                                            <a href="<?= htmlspecialchars($row['invoice_attachment']) ?>" target="_blank" class="inline-flex items-center px-2.5 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition shadow-xs">
+                                            <a href="<?= htmlspecialchars($singleAtt['file_path']) ?>" target="_blank" class="inline-flex items-center px-2.5 py-1.5 rounded-xl text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 transition shadow-xs">
                                                 <i class="fa-solid fa-file-pdf ml-1 text-sm"></i>
                                                 عرض PDF
                                             </a>
                                         <?php endif; ?>
                                     <?php else: ?>
-                                        <span class="text-slate-300 text-[11px]">بدون مرفق</span>
+                                        <!-- Multiple Invoices Badge Button -->
+                                        <button type="button" 
+                                                onclick='openClientExpenseInvoicesModal(<?= json_encode($rowAtts, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, "<?= htmlspecialchars(addslashes($row['title'])) ?>", "<?= htmlspecialchars($row['voucher_number'] ?: ('#' . $row['id'])) ?>")'
+                                                class="inline-flex items-center space-x-1.5 space-x-reverse px-2.5 py-1 rounded-xl text-xs font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 shadow-2xs transition group"
+                                                title="عرض كافة الفواتير المرفقة (<?= $attCount ?> فواتير)">
+                                            <i class="fa-solid fa-layer-group text-indigo-600 text-xs"></i>
+                                            <span><?= $attCount ?> فواتير</span>
+                                            <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-indigo-400 group-hover:text-indigo-700"></i>
+                                        </button>
                                     <?php endif; ?>
                                 </td>
 
@@ -554,6 +589,7 @@ if (!empty($repIds)) {
                     <?php 
                     $repMedia = $reportMediaGrouped[$rep['id']] ?? [];
                     $repPhotos = array_filter($repMedia, fn($m) => $m['file_type'] === 'image');
+                    $repVideos = array_filter($repMedia, fn($m) => $m['file_type'] === 'video');
                     $pct = max(0, min(100, (int)$rep['completion_percentage']));
                     ?>
                     <div class="bg-white rounded-3xl border border-slate-200/90 shadow-sm overflow-hidden print-shadow-none">
@@ -634,17 +670,32 @@ if (!empty($repIds)) {
                                 </div>
                             <?php endif; ?>
 
-                            <!-- Video -->
+                            <!-- Video Section -->
                             <?php 
-                            $videoHtml = renderProjectVideoPlayer($rep['video_file'], $rep['video_url']);
-                            if (!empty($videoHtml)): 
+                            $hasVideos = !empty($repVideos) || !empty($rep['video_file']) || !empty($rep['video_url']);
+                            if ($hasVideos): 
+                                $vCount = count($repVideos);
                             ?>
                                 <div>
-                                    <div class="flex items-center space-x-2 space-x-reverse text-xs font-bold text-slate-700 mb-1">
+                                    <div class="flex items-center space-x-2 space-x-reverse text-xs font-bold text-slate-700 mb-2">
                                         <i class="fa-solid fa-video text-rose-600"></i>
-                                        <span>فيديو توثيق إنجاز المرحلة</span>
+                                        <span>فيديوهات توثيق إنجاز المرحلة <?= $vCount > 1 ? "({$vCount} فيديوهات)" : '' ?></span>
                                     </div>
-                                    <?= $videoHtml ?>
+                                    <div class="space-y-3">
+                                        <?php 
+                                        if (!empty($repVideos)):
+                                            foreach ($repVideos as $vItem):
+                                                echo renderProjectVideoPlayer($vItem['file_path'], null);
+                                            endforeach;
+                                        elseif (!empty($rep['video_file'])):
+                                            echo renderProjectVideoPlayer($rep['video_file'], null);
+                                        endif;
+
+                                        if (!empty($rep['video_url'])):
+                                            echo renderProjectVideoPlayer(null, $rep['video_url']);
+                                        endif;
+                                        ?>
+                                    </div>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -720,6 +771,97 @@ if (!empty($repIds)) {
         <?php endif; ?>
     </div> <!-- /#client-tab-gallery -->
 
+    <!-- TAB 4: BLUEPRINTS & ENGINEERING FILES (CLIENT VIEW) -->
+    <div id="client-tab-blueprints" class="client-tab-pane hidden space-y-6">
+        <div class="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+                <div class="flex items-center space-x-2 space-x-reverse text-cyan-700 font-bold text-xs uppercase mb-1">
+                    <i class="fa-solid fa-compass-drafting text-cyan-600"></i>
+                    <span>المستندات والرسومات الهندسية المعتمدة</span>
+                </div>
+                <h3 class="text-lg font-black text-slate-900">المخططات الهندسية وملفات المشروع</h3>
+                <p class="text-xs text-slate-500 mt-0.5">يمكنك استعراض وتحميل المخططات المعمارية والتنفيذية وتراخيص المشروع بصيغ PDF و CAD</p>
+            </div>
+            <div class="flex items-center space-x-2 space-x-reverse text-xs font-mono font-bold text-slate-600 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                <i class="fa-solid fa-folder-open text-cyan-600 ml-1.5"></i>
+                <span><?= count($blueprints) ?> مخطط متوفر</span>
+            </div>
+        </div>
+
+        <?php if (empty($blueprints)): ?>
+            <div class="bg-white rounded-3xl p-10 border border-slate-200 text-center space-y-3">
+                <div class="w-16 h-16 rounded-2xl bg-cyan-50 text-cyan-600 flex items-center justify-center text-2xl mx-auto">
+                    <i class="fa-solid fa-compass-drafting"></i>
+                </div>
+                <h4 class="text-sm font-black text-slate-800">لا توجد مخططات هندسية مرفقة لهذا المشروع حالياً</h4>
+                <p class="text-xs text-slate-400">سيتم إتاحة المخططات والتراخيص فور اعتمادها ورفعها من قبل إدارة المشروع.</p>
+            </div>
+        <?php else: ?>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <?php foreach ($blueprints as $bp): ?>
+                    <?php 
+                    $ext = strtolower($bp['file_ext'] ?? pathinfo($bp['file_name'], PATHINFO_EXTENSION));
+                    $isImage = in_array($ext, ['png', 'jpg', 'jpeg', 'webp']);
+                    $isPdf = $ext === 'pdf';
+                    $isCad = in_array($ext, ['dwg', 'dxf', 'cad']);
+                    ?>
+                    <div class="bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition overflow-hidden flex flex-col justify-between">
+                        <div class="relative bg-slate-100 h-40 flex items-center justify-center overflow-hidden">
+                            <?php if ($isImage): ?>
+                                <img src="<?= htmlspecialchars($bp['file_path']) ?>" alt="<?= htmlspecialchars($bp['title']) ?>" class="w-full h-full object-cover">
+                            <?php elseif ($isPdf): ?>
+                                <div class="w-full h-full bg-rose-50 flex flex-col items-center justify-center text-rose-600">
+                                    <i class="fa-solid fa-file-pdf text-4xl mb-2"></i>
+                                    <span class="text-xs font-bold font-mono">مستند PDF</span>
+                                </div>
+                            <?php elseif ($isCad): ?>
+                                <div class="w-full h-full bg-slate-900 flex flex-col items-center justify-center text-cyan-400">
+                                    <i class="fa-solid fa-drafting-compass text-4xl mb-2"></i>
+                                    <span class="text-xs font-bold font-mono">ملف AutoCAD CAD</span>
+                                </div>
+                            <?php else: ?>
+                                <div class="w-full h-full bg-slate-50 flex flex-col items-center justify-center text-slate-500">
+                                    <i class="fa-solid fa-file-lines text-4xl mb-2"></i>
+                                    <span class="text-xs font-bold font-mono"><?= strtoupper($ext) ?></span>
+                                </div>
+                            <?php endif; ?>
+                            <span class="absolute top-2.5 right-2.5 text-[10px] font-black px-2.5 py-0.5 rounded-full bg-white/90 text-slate-800 shadow-xs backdrop-blur-xs">
+                                <?= htmlspecialchars($bp['blueprint_type']) ?>
+                            </span>
+                        </div>
+                        <div class="p-4 space-y-2 flex-1 flex flex-col justify-between">
+                            <div>
+                                <h4 class="font-black text-slate-900 text-sm leading-snug line-clamp-1" title="<?= htmlspecialchars($bp['title']) ?>">
+                                    <?= htmlspecialchars($bp['title']) ?>
+                                </h4>
+                                <div class="text-[11px] text-slate-400 mt-1 flex items-center space-x-2 space-x-reverse">
+                                    <span class="font-mono text-slate-500 font-semibold"><?= formatBytes($bp['file_size']) ?></span>
+                                    <span>•</span>
+                                    <span><?= date('Y-m-d', strtotime($bp['created_at'])) ?></span>
+                                </div>
+                                <?php if (!empty($bp['notes'])): ?>
+                                    <p class="text-xs text-slate-600 bg-slate-50 rounded-xl p-2.5 mt-2 leading-relaxed">
+                                        <?= nl2br(htmlspecialchars($bp['notes'])) ?>
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+                            <div class="pt-3 border-t border-slate-100 flex items-center gap-2">
+                                <a href="<?= htmlspecialchars($bp['file_path']) ?>" target="_blank" class="flex-1 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs flex items-center justify-center transition">
+                                    <i class="fa-solid fa-arrow-up-right-from-square ml-1 text-cyan-600"></i>
+                                    <span>معاينة وفتح</span>
+                                </a>
+                                <a href="<?= htmlspecialchars($bp['file_path']) ?>" download="<?= htmlspecialchars($bp['file_name']) ?>" class="flex-1 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-bold text-xs flex items-center justify-center transition">
+                                    <i class="fa-solid fa-download ml-1"></i>
+                                    <span>تحميل الملف</span>
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div> <!-- /#client-tab-blueprints -->
+
     <!-- Official Stamp & Verification Footer -->
     <div class="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4 text-xs text-slate-500">
         <div class="space-y-1">
@@ -732,6 +874,36 @@ if (!empty($repIds)) {
         </div>
     </div>
 
+</div>
+
+<!-- Modal: Client Expense Invoices Gallery (Multiple Invoices Full Preview) -->
+<div id="client-expense-invoices-modal" class="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm hidden items-center justify-center p-4" onclick="closeClientExpenseInvoicesModal()">
+    <div class="relative bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto" onclick="event.stopPropagation()">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div class="flex items-center space-x-2.5 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg font-bold">
+                    <i class="fa-solid fa-receipt"></i>
+                </div>
+                <div>
+                    <h4 class="font-black text-slate-800 text-base" id="client_inv_modal_title">فواتير وإيصالات المصروف</h4>
+                    <p class="text-xs text-slate-500 font-mono" id="client_inv_modal_sub"></p>
+                </div>
+            </div>
+            <button onclick="closeClientExpenseInvoicesModal()" class="w-8 h-8 rounded-full bg-slate-100 text-slate-500 hover:bg-slate-200 flex items-center justify-center">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div id="client_inv_modal_grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
+            <!-- Dynamic invoice items -->
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 mt-5 flex justify-end">
+            <button type="button" onclick="closeClientExpenseInvoicesModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-5 rounded-xl text-xs transition">
+                إغلاق
+            </button>
+        </div>
+    </div>
 </div>
 
 <!-- Lightbox Modal for Receipt Images -->
@@ -787,6 +959,73 @@ function closeReceiptImage() {
     modal.classList.remove('flex');
 }
 
+function openClientExpenseInvoicesModal(attachments, title, voucherNo) {
+    const modal = document.getElementById('client-expense-invoices-modal');
+    const titleEl = document.getElementById('client_inv_modal_title');
+    const subEl = document.getElementById('client_inv_modal_sub');
+    const container = document.getElementById('client_inv_modal_grid');
+    if (!modal || !container) return;
+
+    if (titleEl) titleEl.innerText = 'فواتير المصروف: ' + (title || '');
+    if (subEl) subEl.innerText = (voucherNo ? 'سند رقم: ' + voucherNo + ' | ' : '') + 'إجمالي ' + attachments.length + ' فاتورة مرفقة';
+
+    container.innerHTML = '';
+    attachments.forEach((att) => {
+        const ext = (att.file_ext || '').toLowerCase();
+        const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext);
+        const card = document.createElement('div');
+        card.className = 'flex flex-col justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200 hover:border-indigo-300 transition space-y-2';
+
+        if (isImg) {
+            card.innerHTML = `
+                <div class="relative aspect-4/3 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 cursor-pointer group" onclick="showReceiptImage('${att.file_path}', '${escapeClientHtml(att.file_name)}')">
+                    <img src="${att.file_path}" alt="فاتورة" class="w-full h-full object-cover group-hover:scale-105 transition">
+                    <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition text-sm">
+                        <i class="fa-solid fa-magnifying-glass-plus"></i>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="font-bold text-slate-700 truncate max-w-[140px]" title="${att.file_name}">${att.file_name}</span>
+                    <a href="${att.file_path}" target="_blank" download class="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold">
+                        <i class="fa-solid fa-download ml-0.5"></i> تحميل
+                    </a>
+                </div>
+            `;
+        } else {
+            card.innerHTML = `
+                <div class="aspect-4/3 rounded-xl bg-red-50 text-red-600 border border-red-200 flex flex-col items-center justify-center cursor-pointer group hover:bg-red-100 transition" onclick="window.open('${att.file_path}', '_blank')">
+                    <i class="fa-solid fa-file-pdf text-3xl mb-1 group-hover:scale-110 transition"></i>
+                    <span class="text-xs font-black">ملف PDF</span>
+                </div>
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="font-bold text-slate-700 truncate max-w-[140px]" title="${att.file_name}">${att.file_name}</span>
+                    <a href="${att.file_path}" target="_blank" class="text-red-600 hover:text-red-800 text-[11px] font-bold">
+                        <i class="fa-solid fa-arrow-up-right-from-square ml-0.5"></i> فتح
+                    </a>
+                </div>
+            `;
+        }
+        container.appendChild(card);
+    });
+
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+}
+
+function closeClientExpenseInvoicesModal() {
+    const modal = document.getElementById('client-expense-invoices-modal');
+    if (modal) {
+        modal.classList.add('hidden');
+        modal.classList.remove('flex');
+    }
+}
+
+function escapeClientHtml(str) {
+    return String(str).replace(/[&<>"']/g, function(m) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+    });
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
@@ -794,6 +1033,8 @@ document.addEventListener('DOMContentLoaded', function() {
         switchClientTab('client-tab-reports');
     } else if (tab === 'gallery' || tab === 'client-tab-gallery') {
         switchClientTab('client-tab-gallery');
+    } else if (tab === 'blueprints' || tab === 'client-tab-blueprints') {
+        switchClientTab('client-tab-blueprints');
     }
 });
 </script>

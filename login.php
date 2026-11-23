@@ -89,7 +89,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         <span class="absolute inset-y-0 right-0 flex items-center pr-3.5 text-slate-400 pointer-events-none">
                             <i class="fa-solid fa-user text-sm"></i>
                         </span>
-                        <input type="text" id="username" name="username" required value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" placeholder="أدخل اسم المستخدم" class="w-full bg-slate-900/80 border border-slate-700 rounded-xl pr-10 pl-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition">
+                        <input type="text" id="username" name="username" required value="<?= htmlspecialchars($_POST['username'] ?? '') ?>" placeholder="أدخل اسم المستخدم (مثلاً: mohamed أو admin)" autocapitalize="none" autocorrect="off" autocomplete="username" spellcheck="false" class="w-full bg-slate-900/80 border border-slate-700 rounded-xl pr-10 pl-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-transparent transition">
                     </div>
                 </div>
 

@@ -4,16 +4,26 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
 ?>
 
 <!-- Desktop Sidebar -->
-<aside id="app-sidebar" class="no-print hidden md:flex flex-col w-64 bg-slate-900 text-slate-200 border-l border-slate-800 min-h-screen shrink-0 transition-all duration-300">
+<aside id="app-sidebar" class="no-print hidden md:flex flex-col w-64 bg-slate-900 text-slate-200 border-l border-slate-800 h-screen sticky top-0 shrink-0 z-20 select-none transition-all duration-300">
     <!-- Brand Header -->
     <div class="p-5 border-b border-slate-800 flex items-center justify-between">
-        <a href="dashboard.php" class="flex items-center space-x-3 space-x-reverse">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 text-white flex items-center justify-center text-xl shadow-lg">
-                <i class="fa-solid fa-coins"></i>
-            </div>
-            <div>
-                <span class="text-base font-black tracking-wide text-white block">فينانس ساس</span>
-                <span class="text-[11px] text-slate-400 font-medium block">لوحة تحكم الشركات</span>
+        <a href="dashboard.php" class="flex items-center space-x-3 space-x-reverse min-w-0">
+            <?php if (!empty($currentUser['company_logo']) && file_exists(APP_PATH . '/' . $currentUser['company_logo'])): ?>
+                <div class="w-10 h-10 rounded-xl bg-white p-1 shadow flex items-center justify-center shrink-0">
+                    <img src="<?= htmlspecialchars($currentUser['company_logo']) ?>" alt="شعار" class="max-w-full max-h-full object-contain">
+                </div>
+            <?php else: ?>
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-500 text-white flex items-center justify-center text-xl shadow-lg shrink-0">
+                    <i class="fa-solid fa-coins"></i>
+                </div>
+            <?php endif; ?>
+            <div class="truncate">
+                <span class="text-base font-black tracking-wide text-white block truncate">
+                    <?= htmlspecialchars($currentUser['company_name'] ?? 'فينانس ساس') ?>
+                </span>
+                <span class="text-[11px] text-slate-400 font-medium block truncate">
+                    <?= $isSuperMaster ? 'منصة السوبر أدمن' : 'النظام المالي الموحد' ?>
+                </span>
             </div>
         </a>
     </div>
@@ -42,45 +52,86 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                 <span>المستخدمين والصلاحيات</span>
             </a>
 
+            <a href="backup.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'backup.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                <i class="fa-solid fa-cloud-arrow-down w-6 text-center ml-2.5 <?= $currentPage === 'backup.php' ? 'text-white' : 'text-emerald-400' ?>"></i>
+                <span>النسخ الاحتياطي الشامل</span>
+            </a>
+
+            <a href="audit_logs.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'audit_logs.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                <i class="fa-solid fa-clock-rotate-left w-6 text-center ml-2.5 <?= $currentPage === 'audit_logs.php' ? 'text-white' : 'text-amber-400' ?>"></i>
+                <span>سجل العمليات والرقابة (Equals)</span>
+            </a>
+
         <?php else: ?>
-            <!-- COMPANY SPECIFIC MODULES (Filtered by active company settings) -->
+            <!-- COMPANY SPECIFIC MODULES (Filtered by active company settings and permissions) -->
             <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-5 mb-2">المالية والحسابات</p>
 
             <?php if (hasModule('treasury')): ?>
-                <a href="treasury.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'treasury.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                    <i class="fa-solid fa-vault w-6 text-center ml-2.5 <?= $currentPage === 'treasury.php' ? 'text-white' : 'text-emerald-400' ?>"></i>
-                    <span>الخزنة والإيداعات</span>
-                </a>
+                <?php if (canUser('treasury') && canViewBalances()): ?>
+                    <a href="treasury.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'treasury.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-vault w-6 text-center ml-2.5 <?= $currentPage === 'treasury.php' ? 'text-white' : 'text-emerald-400' ?>"></i>
+                        <span>الخزنة والإيداعات</span>
+                    </a>
+                <?php endif; ?>
 
-                <a href="receipts.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'receipts.php' || $currentPage === 'receipt_print.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                    <i class="fa-solid fa-hand-holding-dollar w-6 text-center ml-2.5 <?= $currentPage === 'receipts.php' ? 'text-white' : 'text-emerald-300' ?>"></i>
-                    <span>إيصالات الاستلام (سند قبض)</span>
-                </a>
-            <?php endif; ?>
+                <?php if (canUser('receipts')): ?>
+                    <a href="receipts.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['receipts.php', 'receipt_create.php', 'receipt_print.php']) ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-hand-holding-dollar w-6 text-center ml-2.5 <?= in_array($currentPage, ['receipts.php', 'receipt_create.php', 'receipt_print.php']) ? 'text-white' : 'text-emerald-300' ?>"></i>
+                        <span>إيصالات الاستلام (سند قبض)</span>
+                    </a>
+                <?php endif; ?>
 
-            <?php if (hasModule('expenses')): ?>
-                <a href="expenses.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'expenses.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                    <i class="fa-solid fa-receipt w-6 text-center ml-2.5 <?= $currentPage === 'expenses.php' ? 'text-white' : 'text-rose-400' ?>"></i>
-                    <span>سجل المصروفات</span>
-                </a>
+                <?php if (canUser('expenses') || canUser('projects')): ?>
+                    <a href="project_vouchers.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['project_vouchers.php', 'vouchers.php', 'voucher_create.php', 'voucher_share.php', 'project_voucher_print.php', 'expense_create.php']) ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-file-invoice-dollar w-6 text-center ml-2.5 <?= in_array($currentPage, ['project_vouchers.php', 'vouchers.php', 'voucher_create.php', 'voucher_share.php', 'project_voucher_print.php', 'expense_create.php']) ? 'text-white' : 'text-rose-400' ?>"></i>
+                        <span>سندات الصرف (سند صرف A4)</span>
+                    </a>
+                <?php endif; ?>
 
-                <?php if (isCompanyAdmin()): ?>
-                    <a href="expense_categories.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'expense_categories.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                        <i class="fa-solid fa-tags w-6 text-center ml-2.5 <?= $currentPage === 'expense_categories.php' ? 'text-white' : 'text-amber-400' ?>"></i>
-                        <span>بنود المصروفات</span>
+                <?php if (canUser('invoices')): ?>
+                    <a href="invoices.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['invoices.php', 'invoice_create.php', 'invoice_print.php']) ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-receipt w-6 text-center ml-2.5 <?= in_array($currentPage, ['invoices.php', 'invoice_create.php', 'invoice_print.php']) ? 'text-white' : 'text-amber-400' ?>"></i>
+                        <span>الفواتير الضريبية المبسطة</span>
                     </a>
                 <?php endif; ?>
             <?php endif; ?>
 
-            <?php if (hasModule('reports')): ?>
+            <?php if (hasModule('expenses') && canUser('expenses')): ?>
+                <a href="expenses.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'expenses.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-receipt w-6 text-center ml-2.5 <?= $currentPage === 'expenses.php' ? 'text-white' : 'text-rose-400' ?>"></i>
+                    <span>سجل المصروفات</span>
+                </a>
+            <?php endif; ?>
+
+            <?php if (hasModule('reports') && canUser('reports') && canViewBalances()): ?>
                 <a href="reports.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'reports.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
                     <i class="fa-solid fa-file-invoice-dollar w-6 text-center ml-2.5 <?= $currentPage === 'reports.php' ? 'text-white' : 'text-blue-400' ?>"></i>
                     <span>التقارير المالية</span>
                 </a>
             <?php endif; ?>
 
+            <!-- REAL ESTATE & PROJECTS MODULE -->
+            <?php if (hasModule('projects') && canUser('projects')): ?>
+                <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-amber-400 mt-5 mb-2 flex items-center">
+                    <i class="fa-solid fa-helmet-safety ml-1.5 text-xs"></i>
+                    <span>التطوير العقاري والمشاريع</span>
+                </p>
+
+                <a href="projects.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['projects.php', 'project_view.php']) ? 'bg-amber-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-city w-6 text-center ml-2.5 <?= in_array($currentPage, ['projects.php', 'project_view.php']) ? 'text-white' : 'text-amber-400' ?>"></i>
+                    <span>المشاريع العقارية</span>
+                </a>
+
+                <?php if (canViewBalances()): ?>
+                    <a href="safes.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'safes.php' ? 'bg-amber-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-vault w-6 text-center ml-2.5 <?= $currentPage === 'safes.php' ? 'text-white' : 'text-emerald-400' ?>"></i>
+                        <span>خزن وحسابات المشاريع</span>
+                    </a>
+                <?php endif; ?>
+            <?php endif; ?>
+
             <!-- HR MODULE (Only if toggled ON for this company) -->
-            <?php if (hasModule('hr')): ?>
+            <?php if (hasModule('hr') && canUser('users')): ?>
                 <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-5 mb-2">الموارد البشرية والرواتب</p>
 
                 <a href="employees.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'employees.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
@@ -96,13 +147,29 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
 
             <?php if (isCompanyAdmin()): ?>
                 <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-5 mb-2">إدارة الشركة</p>
-                <a href="settings.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                    <i class="fa-solid fa-building-gear w-6 text-center ml-2.5 <?= $currentPage === 'settings.php' ? 'text-white' : 'text-indigo-400' ?>"></i>
-                    <span>إعدادات الشركة والمقر</span>
+                <?php if (canUser('settings')): ?>
+                    <a href="settings.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-building-gear w-6 text-center ml-2.5 <?= $currentPage === 'settings.php' ? 'text-white' : 'text-indigo-400' ?>"></i>
+                        <span>إعدادات الشركة والمقر</span>
+                    </a>
+                    <a href="settings.php#issuer-signature-section" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition text-slate-300 hover:bg-slate-800/80 hover:text-white">
+                        <i class="fa-solid fa-signature w-6 text-center ml-2.5 text-amber-400"></i>
+                        <span>التوقيع الإلكتروني للسندات</span>
+                    </a>
+                <?php endif; ?>
+                <?php if (canUser('users')): ?>
+                    <a href="users.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                        <i class="fa-solid fa-users w-6 text-center ml-2.5 <?= $currentPage === 'users.php' ? 'text-white' : 'text-slate-400' ?>"></i>
+                        <span>مستخدمي الشركة</span>
+                    </a>
+                <?php endif; ?>
+                <a href="backup.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'backup.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-cloud-arrow-down w-6 text-center ml-2.5 <?= $currentPage === 'backup.php' ? 'text-white' : 'text-emerald-400' ?>"></i>
+                    <span>النسخ الاحتياطي (Backup)</span>
                 </a>
-                <a href="users.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
-                    <i class="fa-solid fa-users w-6 text-center ml-2.5 <?= $currentPage === 'users.php' ? 'text-white' : 'text-slate-400' ?>"></i>
-                    <span>مستخدمي الشركة</span>
+                <a href="audit_logs.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'audit_logs.php' ? 'bg-brand-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-clock-rotate-left w-6 text-center ml-2.5 <?= $currentPage === 'audit_logs.php' ? 'text-white' : 'text-amber-400' ?>"></i>
+                    <span>سجل العمليات والرقابة (Equals)</span>
                 </a>
             <?php endif; ?>
 
@@ -163,30 +230,57 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                 <a href="users.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                     <i class="fa-solid fa-users-gear ml-3 w-5 text-center"></i> المستخدمين
                 </a>
+                <a href="audit_logs.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'audit_logs.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                    <i class="fa-solid fa-clock-rotate-left ml-3 w-5 text-center text-amber-400"></i> سجل العمليات والرقابة (Equals)
+                </a>
             <?php else: ?>
                 <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-4 mb-1">المالية والحسابات</p>
                 <?php if (hasModule('treasury')): ?>
-                    <a href="treasury.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'treasury.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
-                        <i class="fa-solid fa-vault ml-3 w-5 text-center text-emerald-400"></i> الخزنة والإيداعات
-                    </a>
-                    <a href="receipts.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'receipts.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
-                        <i class="fa-solid fa-hand-holding-dollar ml-3 w-5 text-center text-emerald-300"></i> إيصالات الاستلام (سند قبض)
-                    </a>
+                    <?php if (canUser('treasury') && canViewBalances()): ?>
+                        <a href="treasury.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'treasury.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-vault ml-3 w-5 text-center text-emerald-400"></i> الخزنة والإيداعات
+                        </a>
+                    <?php endif; ?>
+                    <?php if (canUser('receipts')): ?>
+                        <a href="receipts.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['receipts.php', 'receipt_create.php', 'receipt_print.php']) ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-hand-holding-dollar ml-3 w-5 text-center text-emerald-300"></i> إيصالات الاستلام (سند قبض)
+                        </a>
+                    <?php endif; ?>
+                    <?php if (canUser('expenses') || canUser('projects')): ?>
+                        <a href="project_vouchers.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['project_vouchers.php', 'vouchers.php', 'voucher_create.php', 'voucher_share.php', 'project_voucher_print.php', 'expense_create.php']) ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-file-invoice-dollar ml-3 w-5 text-center text-rose-400"></i> سندات الصرف (سند صرف A4)
+                        </a>
+                    <?php endif; ?>
+                    <?php if (canUser('invoices')): ?>
+                        <a href="invoices.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['invoices.php', 'invoice_create.php', 'invoice_print.php']) ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-receipt ml-3 w-5 text-center text-amber-400"></i> الفواتير الضريبية المبسطة
+                        </a>
+                    <?php endif; ?>
                 <?php endif; ?>
-                <?php if (hasModule('expenses')): ?>
+                <?php if (hasModule('expenses') && canUser('expenses')): ?>
                     <a href="expenses.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'expenses.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                         <i class="fa-solid fa-receipt ml-3 w-5 text-center text-rose-400"></i> المصروفات
                     </a>
-                    <a href="expense_categories.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'expense_categories.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
-                        <i class="fa-solid fa-tags ml-3 w-5 text-center text-amber-400"></i> بنود المصروفات
-                    </a>
                 <?php endif; ?>
-                <?php if (hasModule('reports')): ?>
+                <?php if (hasModule('reports') && canUser('reports') && canViewBalances()): ?>
                     <a href="reports.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'reports.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                         <i class="fa-solid fa-file-invoice-dollar ml-3 w-5 text-center text-blue-400"></i> التقارير المالية
                     </a>
                 <?php endif; ?>
-                <?php if (hasModule('hr')): ?>
+                <?php if (hasModule('projects') && canUser('projects')): ?>
+                    <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-amber-400 mt-4 mb-1 flex items-center">
+                        <i class="fa-solid fa-helmet-safety ml-1.5 text-xs"></i> التطوير العقاري والمشاريع
+                    </p>
+                    <a href="projects.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['projects.php', 'project_view.php']) ? 'bg-amber-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-city ml-3 w-5 text-center text-amber-400"></i> المشاريع العقارية
+                    </a>
+                    <?php if (canViewBalances()): ?>
+                        <a href="safes.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'safes.php' ? 'bg-amber-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-vault ml-3 w-5 text-center text-emerald-400"></i> خزن وحسابات المشاريع
+                        </a>
+                    <?php endif; ?>
+                <?php endif; ?>
+                <?php if (hasModule('hr') && canUser('users')): ?>
                     <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-4 mb-1">الموارد البشرية</p>
                     <a href="employees.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'employees.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                         <i class="fa-solid fa-user-tie ml-3 w-5 text-center text-purple-400"></i> دليل الموظفين
@@ -197,11 +291,24 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                 <?php endif; ?>
                 <?php if (isCompanyAdmin()): ?>
                     <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-slate-500 mt-4 mb-1">إدارة الشركة</p>
-                    <a href="settings.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
-                        <i class="fa-solid fa-building-gear ml-3 w-5 text-center text-indigo-400"></i> إعدادات الشركة والمقر
+                    <?php if (canUser('settings')): ?>
+                        <a href="settings.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'settings.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-building-gear ml-3 w-5 text-center text-indigo-400"></i> إعدادات الشركة والمقر
+                        </a>
+                        <a href="settings.php#issuer-signature-section" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg text-slate-300 hover:bg-slate-800">
+                            <i class="fa-solid fa-signature ml-3 w-5 text-center text-amber-400"></i> التوقيع الإلكتروني للسندات
+                        </a>
+                    <?php endif; ?>
+                    <?php if (canUser('users')): ?>
+                        <a href="users.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                            <i class="fa-solid fa-users ml-3 w-5 text-center"></i> مستخدمي الشركة
+                        </a>
+                    <?php endif; ?>
+                    <a href="backup.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'backup.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-cloud-arrow-down ml-3 w-5 text-center text-emerald-400"></i> النسخ الاحتياطي (Backup)
                     </a>
-                    <a href="users.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'users.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
-                        <i class="fa-solid fa-users ml-3 w-5 text-center"></i> مستخدمي الشركة
+                    <a href="audit_logs.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'audit_logs.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-clock-rotate-left ml-3 w-5 text-center text-amber-400"></i> سجل العمليات والرقابة (Equals)
                     </a>
                 <?php endif; ?>
             <?php endif; ?>
@@ -231,34 +338,55 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
         </div>
 
         <div class="grid grid-cols-2 gap-3 mb-2">
-            <?php if (!$isSuperMaster && hasModule('expenses')): ?>
-                <button type="button" onclick="closeMobileFabMenu(); openModal('quick-expense-modal')" class="flex flex-col items-center justify-center p-4 rounded-2xl bg-rose-50 border border-rose-100 hover:bg-rose-100 transition active:scale-95 text-center">
-                    <div class="w-12 h-12 rounded-xl bg-rose-600 text-white flex items-center justify-center text-xl shadow-md mb-2">
+            <?php if (!$isSuperMaster && !isViewOnly() && hasModule('expenses') && canUser('expenses')): ?>
+                <a href="expense_create.php" class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-rose-50 border border-rose-100 hover:bg-rose-100 transition active:scale-95 text-center">
+                    <div class="w-11 h-11 rounded-xl bg-rose-600 text-white flex items-center justify-center text-lg shadow-md mb-1.5">
                         <i class="fa-solid fa-receipt"></i>
                     </div>
-                    <span class="text-xs font-bold text-slate-800">تسجيل مصروف</span>
-                    <span class="text-[10px] text-slate-400 mt-0.5">خصم من الخزنة</span>
+                    <span class="text-xs font-black text-rose-950">تسجيل مصروف</span>
+                    <span class="text-[10px] text-rose-700 mt-0.5">خصم فوري من الخزنة</span>
+                </a>
+            <?php endif; ?>
+
+            <?php if (!$isSuperMaster && !isViewOnly() && hasModule('treasury') && canUser('treasury') && canViewBalances()): ?>
+                <button type="button" onclick="closeMobileFabMenu(); openModal('quick-deposit-modal')" class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 transition active:scale-95 text-center">
+                    <div class="w-11 h-11 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-lg shadow-md mb-1.5">
+                        <i class="fa-solid fa-circle-plus"></i>
+                    </div>
+                    <span class="text-xs font-black text-emerald-950">إيداع نقدية</span>
+                    <span class="text-[10px] text-emerald-700 mt-0.5">إضافة لرصيد الخزنة</span>
                 </button>
             <?php endif; ?>
 
-            <?php if (!$isSuperMaster && hasModule('treasury')): ?>
-                <button type="button" onclick="closeMobileFabMenu(); openModal('quick-deposit-modal')" class="flex flex-col items-center justify-center p-4 rounded-2xl bg-emerald-50 border border-emerald-100 hover:bg-emerald-100 transition active:scale-95 text-center">
-                    <div class="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center text-xl shadow-md mb-2">
-                        <i class="fa-solid fa-circle-plus"></i>
+            <?php if (!$isSuperMaster && !isViewOnly() && canUser('receipts')): ?>
+                <a href="receipt_create.php" class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 transition active:scale-95 text-center <?= (!canUser('expenses') || !canViewBalances()) ? 'col-span-2' : '' ?>">
+                    <div class="flex items-center space-x-2 space-x-reverse mb-0.5">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-sm shadow-xs">
+                            <i class="fa-solid fa-hand-holding-dollar"></i>
+                        </div>
+                        <span class="text-xs font-black text-indigo-950">إيصال قبض جديد</span>
                     </div>
-                    <span class="text-xs font-bold text-slate-800">إيداع نقدية</span>
-                    <span class="text-[10px] text-slate-400 mt-0.5">إضافة لرصيد الخزنة</span>
-                </button>
+                    <span class="text-[10px] text-indigo-700">تحصيل نقدية وطباعة سند القبض</span>
+                </a>
+            <?php endif; ?>
 
-                <a href="receipts.php" class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-indigo-50 border border-indigo-100 hover:bg-indigo-100 transition active:scale-95 text-center col-span-2">
-                    <div class="flex items-center space-x-3 space-x-reverse">
-                        <div class="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-lg shadow-md shrink-0">
-                            <i class="fa-solid fa-file-invoice-dollar"></i>
+            <?php if (!$isSuperMaster && !isViewOnly() && canUser('invoices')): ?>
+                <a href="invoice_create.php" class="flex flex-col items-center justify-center p-3.5 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 transition active:scale-95 text-center col-span-2">
+                    <div class="flex items-center space-x-2 space-x-reverse mb-0.5">
+                        <div class="w-8 h-8 rounded-lg bg-amber-600 text-white flex items-center justify-center text-sm shadow-xs">
+                            <i class="fa-solid fa-receipt"></i>
                         </div>
-                        <div class="text-right">
-                            <span class="text-xs font-bold text-slate-800 block">إصدار إيصال استلام جديد (سند قبض)</span>
-                            <span class="text-[10px] text-slate-500 block">مع رمز QR وطباعة ومشاركة إلكترونية</span>
-                        </div>
+                        <span class="text-xs font-black text-amber-950">إصدار فاتورة ضريبية مبسطة</span>
+                    </div>
+                    <span class="text-[10px] text-amber-700">فاتورة كاملة بالهوية والـ QR</span>
+                </a>
+            <?php endif; ?>
+
+            <?php if (!$isSuperMaster && hasModule('projects') && canUser('projects')): ?>
+                <a href="projects.php" class="flex flex-col items-center justify-center p-3 rounded-2xl bg-amber-50 border border-amber-200 hover:bg-amber-100 transition active:scale-95 text-center col-span-2">
+                    <div class="flex items-center space-x-2 space-x-reverse">
+                        <i class="fa-solid fa-city text-amber-600 text-sm"></i>
+                        <span class="text-xs font-black text-amber-950">المشاريع العقارية وعُهد العقارات</span>
                     </div>
                 </a>
             <?php endif; ?>
@@ -282,6 +410,7 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
 </div>
 
 <!-- Mobile App Bottom Navigation Bar (Symmetrical 5-Column Native Layout) -->
+<?php if ($currentPage !== 'expense_create.php'): ?>
 <nav id="app-bottom-nav" class="no-print md:hidden fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-slate-200/80 z-40 px-2 py-1 shadow-[0_-4px_25px_rgba(0,0,0,0.06)] safe-area-bottom">
     <div class="grid grid-cols-5 items-center text-center h-14">
         <!-- 1: Dashboard -->
@@ -317,33 +446,78 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
             </button>
 
         <?php else: ?>
-            <!-- 2: Treasury -->
-            <a href="treasury.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'treasury.php' ? 'text-emerald-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
-                <i class="fa-solid fa-vault text-lg mb-0.5 <?= $currentPage === 'treasury.php' ? 'text-emerald-600 scale-110' : '' ?>"></i>
-                <span class="text-[10px] leading-tight">الخزنة</span>
-            </a>
+            <!-- 2: Safe / Invoices / Receipts -->
+            <?php if (canUser('treasury') && canViewBalances()): ?>
+                <a href="treasury.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'treasury.php' ? 'text-emerald-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-vault text-lg mb-0.5 <?= $currentPage === 'treasury.php' ? 'text-emerald-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">الخزنة</span>
+                </a>
+            <?php elseif (canUser('invoices')): ?>
+                <a href="invoices.php" class="flex flex-col items-center justify-center py-1 transition <?= in_array($currentPage, ['invoices.php', 'invoice_create.php']) ? 'text-brand-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-receipt text-lg mb-0.5 <?= in_array($currentPage, ['invoices.php', 'invoice_create.php']) ? 'text-brand-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">الفواتير</span>
+                </a>
+            <?php elseif (canUser('receipts')): ?>
+                <a href="receipts.php" class="flex flex-col items-center justify-center py-1 transition <?= in_array($currentPage, ['receipts.php', 'receipt_create.php']) ? 'text-indigo-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-hand-holding-dollar text-lg mb-0.5 <?= in_array($currentPage, ['receipts.php', 'receipt_create.php']) ? 'text-indigo-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">القبض</span>
+                </a>
+            <?php else: ?>
+                <a href="dashboard.php" class="flex flex-col items-center justify-center py-1 text-slate-500">
+                    <i class="fa-solid fa-house text-lg mb-0.5"></i>
+                    <span class="text-[10px] leading-tight">الرئيسية</span>
+                </a>
+            <?php endif; ?>
 
             <!-- 3: Elevated Center FAB Button (+) -->
-            <div class="flex items-center justify-center -mt-6">
-                <button type="button" onclick="toggleMobileFabMenu()" class="w-12 h-12 bg-gradient-to-tr from-rose-600 to-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition transform border-4 border-slate-50 ring-2 ring-rose-100" aria-label="إجراء سريع">
-                    <i id="fab-icon" class="fa-solid fa-plus text-lg transition-transform duration-200"></i>
+            <?php if (!isViewOnly()): ?>
+                <div class="flex items-center justify-center -mt-6">
+                    <button type="button" onclick="toggleMobileFabMenu()" class="w-12 h-12 bg-gradient-to-tr from-rose-600 to-rose-500 text-white rounded-full flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-105 active:scale-95 transition transform border-4 border-slate-50 ring-2 ring-rose-100" aria-label="إجراء سريع">
+                        <i id="fab-icon" class="fa-solid fa-plus text-lg transition-transform duration-200"></i>
+                    </button>
+                </div>
+            <?php else: ?>
+                <div class="flex items-center justify-center -mt-2">
+                    <span class="px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-800 text-[10px] font-black">
+                        مشاهدة
+                    </span>
+                </div>
+            <?php endif; ?>
+
+            <!-- 4: Expenses / Projects -->
+            <?php if (canUser('expenses')): ?>
+                <a href="expenses.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'expenses.php' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-receipt text-lg mb-0.5 <?= $currentPage === 'expenses.php' ? 'text-rose-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">المصروفات</span>
+                </a>
+            <?php elseif (canUser('projects')): ?>
+                <a href="projects.php" class="flex flex-col items-center justify-center py-1 transition <?= in_array($currentPage, ['projects.php', 'project_view.php']) ? 'text-amber-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-city text-lg mb-0.5 <?= in_array($currentPage, ['projects.php', 'project_view.php']) ? 'text-amber-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">المشاريع</span>
+                </a>
+            <?php else: ?>
+                <a href="receipts.php" class="flex flex-col items-center justify-center py-1 text-slate-500">
+                    <i class="fa-solid fa-hand-holding-dollar text-lg mb-0.5"></i>
+                    <span class="text-[10px] leading-tight">القبض</span>
+                </a>
+            <?php endif; ?>
+
+            <!-- 5: Reports or Menu -->
+            <?php if (canUser('reports') && canViewBalances()): ?>
+                <a href="reports.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'reports.php' ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
+                    <i class="fa-solid fa-file-invoice-dollar text-lg mb-0.5 <?= $currentPage === 'reports.php' ? 'text-blue-600 scale-110' : '' ?>"></i>
+                    <span class="text-[10px] leading-tight">التقارير</span>
+                </a>
+            <?php else: ?>
+                <button type="button" onclick="openMobileSidebar()" class="flex flex-col items-center justify-center py-1 text-slate-500 hover:text-slate-800 transition">
+                    <i class="fa-solid fa-bars-staggered text-lg mb-0.5"></i>
+                    <span class="text-[10px] leading-tight">القائمة</span>
                 </button>
-            </div>
-
-            <!-- 4: Expenses -->
-            <a href="expenses.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'expenses.php' ? 'text-rose-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
-                <i class="fa-solid fa-receipt text-lg mb-0.5 <?= $currentPage === 'expenses.php' ? 'text-rose-600 scale-110' : '' ?>"></i>
-                <span class="text-[10px] leading-tight">المصروفات</span>
-            </a>
-
-            <!-- 5: Reports -->
-            <a href="reports.php" class="flex flex-col items-center justify-center py-1 transition <?= $currentPage === 'reports.php' ? 'text-blue-600 font-bold' : 'text-slate-500 hover:text-slate-800' ?>">
-                <i class="fa-solid fa-file-invoice-dollar text-lg mb-0.5 <?= $currentPage === 'reports.php' ? 'text-blue-600 scale-110' : '' ?>"></i>
-                <span class="text-[10px] leading-tight">التقارير</span>
-            </a>
+            <?php endif; ?>
         <?php endif; ?>
     </div>
 </nav>
+<?php endif; ?>
 
 <script>
     // Global Navigation & Drawer Handlers

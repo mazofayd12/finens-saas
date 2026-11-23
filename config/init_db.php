@@ -19,6 +19,10 @@ function ensureDatabaseTablesExist(): void {
             module_expenses INTEGER DEFAULT 1,
             module_hr INTEGER DEFAULT 0,
             module_reports INTEGER DEFAULT 1,
+            module_projects INTEGER DEFAULT 0,
+            tax_number VARCHAR(100) NULL,
+            cr_number VARCHAR(100) NULL,
+            address TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ");
@@ -33,6 +37,7 @@ function ensureDatabaseTablesExist(): void {
             password VARCHAR(255) NOT NULL,
             role VARCHAR(50) NOT NULL, -- 'super_admin', 'company_admin', 'data_entry'
             phone VARCHAR(50) NULL,
+            permissions TEXT NULL,
             is_active INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
@@ -167,6 +172,13 @@ function ensureDatabaseTablesExist(): void {
             purpose TEXT NOT NULL,
             receipt_date DATE NOT NULL,
             notes TEXT NULL,
+            sign_token VARCHAR(64) NULL,
+            recipient_signature TEXT NULL,
+            signature_status VARCHAR(30) DEFAULT 'pending_signature',
+            signed_at DATETIME NULL,
+            signed_ip VARCHAR(45) NULL,
+            signed_by_name VARCHAR(255) NULL,
+            issuer_signature TEXT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -174,15 +186,246 @@ function ensureDatabaseTablesExist(): void {
         )
     ");
 
-    // Auto-migrate: check if logo column exists in companies
+    // Projects table (Real Estate / Construction module)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            code VARCHAR(50) NULL,
+            capital DECIMAL(15, 2) DEFAULT 0.00,
+            currency VARCHAR(20) DEFAULT 'ر.س',
+            safe_id INTEGER NULL,
+            location VARCHAR(255) NULL,
+            status VARCHAR(50) DEFAULT 'active', -- 'active', 'completed', 'paused'
+            project_type VARCHAR(50) DEFAULT 'with_capital', -- 'with_capital', 'without_capital'
+            client_name VARCHAR(255) NULL,
+            client_phone VARCHAR(50) NULL,
+            client_fee_percentage DECIMAL(5, 2) DEFAULT 0.00,
+            description TEXT NULL,
+            start_date DATE NULL,
+            end_date DATE NULL,
+            share_token VARCHAR(64) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (safe_id) REFERENCES safes(id) ON DELETE SET NULL
+        )
+    ");
+
+    // Project Daily Progress Reports (تقارير الإنجاز اليومية والميدانية للمشاريع)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS project_daily_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            project_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            report_date DATE NOT NULL,
+            period_range VARCHAR(255) NULL, -- e.g. 'من السبت للسبت' أو 'من الخميس للخميس'
+            title VARCHAR(255) NOT NULL,
+            stage VARCHAR(100) NULL, -- e.g. 'سباكة', 'عظم', 'كهرباء', 'تشطيبات'
+            completion_percentage INTEGER DEFAULT 0,
+            description TEXT NULL,
+            video_url TEXT NULL,
+            video_file VARCHAR(255) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        )
+    ");
+
+    // Project Report Media (صور وفيديوهات الموقع المرفقة بكل تقرير)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS project_report_media (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL,
+            project_id INTEGER NOT NULL,
+            company_id INTEGER NOT NULL,
+            file_path VARCHAR(255) NOT NULL,
+            file_type VARCHAR(20) DEFAULT 'image', -- 'image' or 'video'
+            caption VARCHAR(255) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (report_id) REFERENCES project_daily_reports(id) ON DELETE CASCADE,
+            FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+        )
+    ");
+
+    // Auto-migrate: check if columns exist in companies
     try {
         $cols = $db->query("PRAGMA table_info(companies)")->fetchAll(PDO::FETCH_COLUMN, 1);
         if (!in_array('logo', $cols)) {
             $db->exec("ALTER TABLE companies ADD COLUMN logo VARCHAR(255) NULL;");
         }
+        if (!in_array('module_projects', $cols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN module_projects INTEGER DEFAULT 0;");
+        }
+        if (!in_array('tax_number', $cols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN tax_number VARCHAR(100) NULL;");
+        }
+        if (!in_array('cr_number', $cols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN cr_number VARCHAR(100) NULL;");
+        }
+        if (!in_array('address', $cols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN address TEXT NULL;");
+        }
     } catch (Exception $e) {
         // In case of MySQL or if already added
     }
+
+    // Auto-migrate: safes table (project_id, type)
+    try {
+        $safeCols = $db->query("PRAGMA table_info(safes)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('project_id', $safeCols)) {
+            $db->exec("ALTER TABLE safes ADD COLUMN project_id INTEGER NULL;");
+        }
+        if (!in_array('type', $safeCols)) {
+            $db->exec("ALTER TABLE safes ADD COLUMN type VARCHAR(50) DEFAULT 'main';");
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: expenses table (project_id, attachment, tax, beneficiary, voucher)
+    try {
+        $expCols = $db->query("PRAGMA table_info(expenses)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('project_id', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN project_id INTEGER NULL;");
+        }
+        if (!in_array('invoice_attachment', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN invoice_attachment VARCHAR(255) NULL;");
+        }
+        if (!in_array('tax_rate', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN tax_rate DECIMAL(5, 2) DEFAULT 0.00;");
+        }
+        if (!in_array('tax_amount', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN tax_amount DECIMAL(15, 2) DEFAULT 0.00;");
+        }
+        if (!in_array('beneficiary_name', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN beneficiary_name VARCHAR(255) NULL;");
+        }
+        if (!in_array('beneficiary_id_number', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN beneficiary_id_number VARCHAR(100) NULL;");
+        }
+        if (!in_array('beneficiary_phone', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN beneficiary_phone VARCHAR(50) NULL;");
+        }
+        if (!in_array('voucher_number', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN voucher_number VARCHAR(50) NULL;");
+        }
+        if (!in_array('status', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN status VARCHAR(30) DEFAULT 'deducted';");
+        }
+        if (!in_array('payment_method', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN payment_method VARCHAR(50) DEFAULT 'نقداً كاش';");
+        }
+        if (!in_array('sign_token', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN sign_token VARCHAR(64) NULL;");
+        }
+        if (!in_array('recipient_signature', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN recipient_signature TEXT NULL;");
+        }
+        if (!in_array('signature_status', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN signature_status VARCHAR(30) DEFAULT 'pending_signature';");
+        }
+        if (!in_array('signed_at', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN signed_at DATETIME NULL;");
+        }
+        if (!in_array('signed_ip', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN signed_ip VARCHAR(45) NULL;");
+        }
+        if (!in_array('signed_by_name', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN signed_by_name VARCHAR(255) NULL;");
+        }
+        if (!in_array('issuer_signature', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN issuer_signature TEXT NULL;");
+        }
+        $db->exec("UPDATE expenses SET status = 'deducted' WHERE status IS NULL OR status = '';");
+        $db->exec("UPDATE expenses SET sign_token = lower(hex(randomblob(16))) WHERE sign_token IS NULL OR sign_token = '';");
+    } catch (Exception $e) {}
+
+    // Auto-migrate: safe_transactions table (project_id)
+    try {
+        $stCols = $db->query("PRAGMA table_info(safe_transactions)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('project_id', $stCols)) {
+            $db->exec("ALTER TABLE safe_transactions ADD COLUMN project_id INTEGER NULL;");
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: projects table (share_token)
+    try {
+        $pCols = $db->query("PRAGMA table_info(projects)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('share_token', $pCols)) {
+            $db->exec("ALTER TABLE projects ADD COLUMN share_token VARCHAR(64) NULL;");
+        }
+        $emptyTokens = $db->query("SELECT id FROM projects WHERE share_token IS NULL OR share_token = ''")->fetchAll();
+        foreach ($emptyTokens as $et) {
+            $tok = bin2hex(random_bytes(16));
+            $db->prepare("UPDATE projects SET share_token = :tok WHERE id = :id")->execute([':tok' => $tok, ':id' => $et['id']]);
+        }
+
+        // Auto-migrate: projects table (project_type, client_name, client_phone, client_fee_percentage)
+        if (!in_array('project_type', $pCols)) {
+            $db->exec("ALTER TABLE projects ADD COLUMN project_type VARCHAR(50) DEFAULT 'with_capital';");
+        }
+        if (!in_array('client_name', $pCols)) {
+            $db->exec("ALTER TABLE projects ADD COLUMN client_name VARCHAR(255) NULL;");
+        }
+        if (!in_array('client_phone', $pCols)) {
+            $db->exec("ALTER TABLE projects ADD COLUMN client_phone VARCHAR(50) NULL;");
+        }
+        if (!in_array('client_fee_percentage', $pCols)) {
+            $db->exec("ALTER TABLE projects ADD COLUMN client_fee_percentage DECIMAL(5, 2) DEFAULT 0.00;");
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: receipts table (project_id & electronic signatures)
+    try {
+        $recCols = $db->query("PRAGMA table_info(receipts)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('project_id', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN project_id INTEGER NULL;");
+        }
+        if (!in_array('sign_token', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN sign_token VARCHAR(64) NULL;");
+        }
+        if (!in_array('recipient_signature', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN recipient_signature TEXT NULL;");
+        }
+        if (!in_array('signature_status', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN signature_status VARCHAR(30) DEFAULT 'pending_signature';");
+        }
+        if (!in_array('signed_at', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN signed_at DATETIME NULL;");
+        }
+        if (!in_array('signed_ip', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN signed_ip VARCHAR(45) NULL;");
+        }
+        if (!in_array('signed_by_name', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN signed_by_name VARCHAR(255) NULL;");
+        }
+        if (!in_array('issuer_signature', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN issuer_signature TEXT NULL;");
+        }
+        // Ensure every existing receipt has a unique sign_token
+        $db->exec("UPDATE receipts SET sign_token = lower(hex(randomblob(16))) WHERE sign_token IS NULL OR sign_token = '';");
+    } catch (Exception $e) {}
+
+    // Auto-migrate: users table (electronic signature for issuer)
+    try {
+        $userCols = $db->query("PRAGMA table_info(users)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('signature', $userCols)) {
+            $db->exec("ALTER TABLE users ADD COLUMN signature TEXT NULL;");
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: companies table (signature and stamp)
+    try {
+        $cCols = $db->query("PRAGMA table_info(companies)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('signature', $cCols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN signature TEXT NULL;");
+        }
+        if (!in_array('stamp', $cCols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN stamp TEXT NULL;");
+        }
+    } catch (Exception $e) {}
 
     // Auto-migrate: add currency column to receipts, safe_transactions, expenses if missing
     try {
@@ -212,6 +455,124 @@ function ensureDatabaseTablesExist(): void {
             $db->exec("ALTER TABLE payrolls ADD COLUMN currency VARCHAR(20) DEFAULT 'ج.م';");
         }
     } catch (Exception $e) {}
+
+    // Auto-migrate: National Address fields for companies
+    try {
+        $compCols = $db->query("PRAGMA table_info(companies)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        $addrFields = [
+            'building_no' => 'VARCHAR(50) NULL',
+            'street_name' => 'VARCHAR(255) NULL',
+            'district' => 'VARCHAR(150) NULL',
+            'city' => 'VARCHAR(100) NULL',
+            'postal_code' => 'VARCHAR(50) NULL',
+            'additional_no' => 'VARCHAR(50) NULL',
+            'country' => 'VARCHAR(50) NULL DEFAULT "SA"',
+            'email' => 'VARCHAR(150) NULL',
+            'location_url' => 'TEXT NULL',
+            'primary_color' => 'VARCHAR(30) DEFAULT "#b91c1c"',
+            'dashboard_color' => 'VARCHAR(30) DEFAULT "#4f46e5"'
+        ];
+        foreach ($addrFields as $fld => $fldType) {
+            if (!in_array($fld, $compCols)) {
+                $db->exec("ALTER TABLE companies ADD COLUMN {$fld} {$fldType};");
+            }
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: Cheque and bank fields for receipts and expenses
+    try {
+        $userCols = $db->query("PRAGMA table_info(users)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('permissions', $userCols)) {
+            $db->exec("ALTER TABLE users ADD COLUMN permissions TEXT NULL;");
+        }
+    } catch (Exception $e) {}
+
+    try {
+        $recCols = $db->query("PRAGMA table_info(receipts)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('cheque_number', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN cheque_number VARCHAR(100) NULL;");
+        }
+        if (!in_array('bank_name', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN bank_name VARCHAR(150) NULL;");
+        }
+        if (!in_array('cheque_date', $recCols)) {
+            $db->exec("ALTER TABLE receipts ADD COLUMN cheque_date DATE NULL;");
+        }
+    } catch (Exception $e) {}
+
+    try {
+        $expCols = $db->query("PRAGMA table_info(expenses)")->fetchAll(PDO::FETCH_COLUMN, 1);
+        if (!in_array('cheque_number', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN cheque_number VARCHAR(100) NULL;");
+        }
+        if (!in_array('bank_name', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN bank_name VARCHAR(150) NULL;");
+        }
+        if (!in_array('cheque_date', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN cheque_date DATE NULL;");
+        }
+        if (!in_array('approved_by', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN approved_by INTEGER NULL;");
+        }
+        if (!in_array('approved_at', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN approved_at DATETIME NULL;");
+        }
+        if (!in_array('rejected_by', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN rejected_by INTEGER NULL;");
+        }
+        if (!in_array('rejected_at', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN rejected_at DATETIME NULL;");
+        }
+        if (!in_array('rejection_reason', $expCols)) {
+            $db->exec("ALTER TABLE expenses ADD COLUMN rejection_reason TEXT NULL;");
+        }
+    } catch (Exception $e) {}
+
+    // Auto-migrate: Create invoices and invoice_items tables (Simplified Tax Invoices)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS invoices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL,
+            user_id INTEGER,
+            invoice_number VARCHAR(50) NOT NULL,
+            invoice_date DATE NOT NULL,
+            customer_name VARCHAR(255) NOT NULL,
+            customer_phone VARCHAR(50) NULL,
+            customer_tax_number VARCHAR(100) NULL,
+            payment_method VARCHAR(50) DEFAULT 'نقداً',
+            discount_days INTEGER DEFAULT 0,
+            subtotal DECIMAL(15,2) DEFAULT 0,
+            tax_rate DECIMAL(5,2) DEFAULT 15.00,
+            tax_amount DECIMAL(15,2) DEFAULT 0,
+            discount_amount DECIMAL(15,2) DEFAULT 0,
+            total_amount DECIMAL(15,2) DEFAULT 0,
+            currency VARCHAR(20) DEFAULT 'ج.م',
+            warehouse VARCHAR(100) NULL,
+            seller_name VARCHAR(100) NULL,
+            notes TEXT NULL,
+            qr_data TEXT NULL,
+            status VARCHAR(30) DEFAULT 'issued',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
+        )
+    ");
+
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS invoice_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            invoice_id INTEGER NOT NULL,
+            item_code VARCHAR(50) NULL,
+            item_name VARCHAR(255) NOT NULL,
+            quantity DECIMAL(15,2) DEFAULT 1,
+            unit VARCHAR(50) DEFAULT 'طن',
+            unit_price DECIMAL(15,2) DEFAULT 0,
+            discount_amount DECIMAL(15,2) DEFAULT 0,
+            tax_rate DECIMAL(5,2) DEFAULT 15.00,
+            tax_amount DECIMAL(15,2) DEFAULT 0,
+            total_amount DECIMAL(15,2) DEFAULT 0,
+            FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+        )
+    ");
 
     // Seed data if no users exist
     $checkUser = $db->query("SELECT COUNT(*) as cnt FROM users")->fetch();

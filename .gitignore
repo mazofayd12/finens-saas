@@ -1,3 +1,6 @@
 .DS_Store
 *.log
 deploy.tar.gz
+database.sqlite
+scratch/
+uploads/

@@ -28,6 +28,7 @@ if (!empty($activeCompanyId)) {
     <title><?= htmlspecialchars($pageTitle) ?> | <?= htmlspecialchars(APP_NAME) ?></title>
 
     <!-- Tailwind CSS CDN -->
+    <?php $dashColor = !empty($currentUser['company_dashboard_color']) ? $currentUser['company_dashboard_color'] : '#4f46e5'; ?>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -36,19 +37,25 @@ if (!empty($activeCompanyId)) {
                 extend: {
                     colors: {
                         brand: {
-                            50: '#eef2ff',
-                            100: '#e0e7ff',
-                            500: '#6366f1',
-                            600: '#4f46e5',
-                            700: '#4338ca',
-                            800: '#3730a3',
-                            900: '#312e81',
+                            50: '<?= $dashColor ?>15',
+                            100: '<?= $dashColor ?>28',
+                            500: '<?= $dashColor ?>',
+                            600: '<?= $dashColor ?>',
+                            700: '<?= $dashColor ?>',
+                            800: '<?= $dashColor ?>',
+                            900: '<?= $dashColor ?>',
                         }
                     }
                 }
             }
         }
     </script>
+    <style>
+        :root {
+            --primary: <?= htmlspecialchars($dashColor) ?>;
+            --primary-hover: <?= htmlspecialchars($dashColor) ?>;
+        }
+    </style>
 
     <!-- FontAwesome 6 CDN -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -59,7 +66,7 @@ if (!empty($activeCompanyId)) {
 <body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased selection:bg-brand-500 selection:text-white">
 
     <!-- Mobile PWA Install Banner -->
-    <div id="pwa-install-banner" class="hidden no-print bg-gradient-to-r from-brand-600 to-indigo-700 text-white px-4 py-2.5 shadow-md flex items-center justify-between z-50 text-xs sm:text-sm">
+    <div id="pwa-install-banner" class="hidden md:hidden no-print bg-gradient-to-r from-brand-600 to-indigo-700 text-white px-4 py-2.5 shadow-md flex items-center justify-between z-50 text-xs sm:text-sm">
         <div class="flex items-center space-x-2 space-x-reverse">
             <i class="fa-solid fa-mobile-screen-button text-lg animate-bounce"></i>
             <div>

@@ -1,12 +1,18 @@
 <?php
 require_once __DIR__ . '/config/app.php';
 requireLogin();
+requirePermission('receipts');
 
 $currentUser = getCurrentUser();
-$activeCompanyId = (int)$currentUser['active_company_id'];
-$currency = $currentUser['currency'] ?? 'ج.م';
 $db = getDBConnection();
-
+$activeCompanyId = (int)($currentUser['active_company_id'] ?? 0);
+if ($activeCompanyId <= 0 && isSuperAdmin()) {
+    $firstComp = $db->query("SELECT id FROM companies WHERE is_active = 1 LIMIT 1")->fetch();
+    if ($firstComp) {
+        $activeCompanyId = (int)$firstComp['id'];
+    }
+}
+$currency = $currentUser['currency'] ?? 'ج.م';
 $safe = getCompanyMainSafe($activeCompanyId);
 
 // Fetch company details including logo
@@ -14,74 +20,9 @@ $compStmt = $db->prepare("SELECT * FROM companies WHERE id = :cid LIMIT 1");
 $compStmt->execute([':cid' => $activeCompanyId]);
 $company = $compStmt->fetch();
 
-// Handle Company Branding & Logo Settings
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && in_array($_POST['action'], ['upload_logo', 'update_company_settings'])) {
-    if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
-        die('خطأ في التحقق من صحة الطلب');
-    }
-
-    $companyName = trim($_POST['company_name'] ?? '');
-    $companyPhone = trim($_POST['company_phone'] ?? '');
-    $companyCurrency = trim($_POST['company_currency'] ?? $company['currency'] ?? 'ج.م');
-    $removeLogo = isset($_POST['remove_logo']) && $_POST['remove_logo'] === '1';
-
-    if (empty($companyName)) {
-        setFlash('error', 'يرجى إدخال اسم المقر / الشركة.');
-    } else {
-        $logoPath = $company['logo'] ?? null;
-
-        if ($removeLogo) {
-            $logoPath = null;
-        }
-
-        // Handle file upload if provided
-        if (isset($_FILES['company_logo']) && $_FILES['company_logo']['error'] === UPLOAD_ERR_OK) {
-            $fileTmp = $_FILES['company_logo']['tmp_name'];
-            $fileName = $_FILES['company_logo']['name'];
-            $fileSize = $_FILES['company_logo']['size'];
-            $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-            $allowedExts = ['png', 'jpg', 'jpeg', 'webp', 'svg'];
-            if (!in_array($ext, $allowedExts)) {
-                setFlash('error', 'صيغة الصورة غير مدعومة. يرجى رفع ملف صورة (PNG, JPG, WEBP, SVG).');
-            } elseif ($fileSize > 5 * 1024 * 1024) {
-                setFlash('error', 'حجم الصورة كبير جداً، الحد الأقصى 5 ميجابايت.');
-            } else {
-                $newFileName = 'logo_' . $activeCompanyId . '_' . time() . '.' . $ext;
-                $uploadDir = APP_PATH . '/assets/uploads/logos/';
-                if (!is_dir($uploadDir)) {
-                    mkdir($uploadDir, 0777, true);
-                }
-                $targetPath = $uploadDir . $newFileName;
-
-                if (move_uploaded_file($fileTmp, $targetPath)) {
-                    $logoPath = 'assets/uploads/logos/' . $newFileName;
-                } else {
-                    setFlash('error', 'فشل حفظ ملف الشعار على الخادم.');
-                }
-            }
-        }
-
-        $upd = $db->prepare("UPDATE companies SET name = :name, phone = :phone, currency = :curr, logo = :logo WHERE id = :id");
-        $upd->execute([
-            ':name' => $companyName,
-            ':phone' => $companyPhone,
-            ':curr' => $companyCurrency,
-            ':logo' => $logoPath,
-            ':id' => $activeCompanyId
-        ]);
-
-        // Refresh user session cache
-        getCurrentUser(true);
-
-        setFlash('success', 'تم تحديث اسم الشركة وبيانات المقر والشعار بنجاح!');
-        header('Location: receipts.php');
-        exit;
-    }
-}
-
 // Handle POST: Create Receipt
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'create_receipt') {
+    requireNotViewOnly();
     if (!verifyCSRFToken($_POST['csrf_token'] ?? '')) {
         die('خطأ في التحقق من صحة الطلب');
     }
@@ -91,6 +32,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $amount = (float)($_POST['amount'] ?? 0);
     $recCurrency = trim($_POST['currency'] ?? $currency);
     $paymentMethod = trim($_POST['payment_method'] ?? 'نقداً كاش');
+    $chequeNumber = trim($_POST['cheque_number'] ?? '');
+    $bankName = trim($_POST['bank_name'] ?? '');
+    $chequeDate = !empty($_POST['cheque_date']) ? trim($_POST['cheque_date']) : null;
     $purpose = trim($_POST['purpose'] ?? '');
     $notes = trim($_POST['notes'] ?? '');
     $receiptDate = trim($_POST['receipt_date'] ?? date('Y-m-d'));
@@ -133,10 +77,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 INSERT INTO receipts (
                     receipt_number, company_id, user_id, safe_transaction_id,
                     customer_name, customer_phone, amount, currency, amount_words, payment_method,
+                    cheque_number, bank_name, cheque_date,
                     purpose, receipt_date, notes, created_at
                 ) VALUES (
                     :rnum, :cid, :uid, :txid,
                     :cname, :cphone, :amt, :curr, :awords, :pmethod,
+                    :cheque_no, :bank_name, :cheque_date,
                     :purp, :rdate, :notes, :now
                 )
             ");
@@ -151,6 +97,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 ':curr' => $recCurrency,
                 ':awords' => $amountWords,
                 ':pmethod' => $paymentMethod,
+                ':cheque_no' => $chequeNumber ?: null,
+                ':bank_name' => $bankName ?: null,
+                ':cheque_date' => $chequeDate,
                 ':purp' => $purpose,
                 ':rdate' => $receiptDate,
                 ':notes' => $notes,
@@ -160,8 +109,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
             $db->commit();
             setFlash('success', "تم إصدار إيصال الاستلام رقم {$receiptNumber} بنجاح!");
-            // Redirect to receipts list or directly to print preview with auto-print
-            header('Location: receipt_print.php?id=' . $newReceiptId . '&autoprint=1');
+            // Redirect to share & electronic signature page
+            header('Location: receipt_share.php?id=' . $newReceiptId);
             exit;
         } catch (Exception $e) {
             $db->rollBack();
@@ -217,41 +166,16 @@ require_once __DIR__ . '/includes/header.php';
             </p>
         </div>
         <div class="flex items-center space-x-2 space-x-reverse">
-            <button onclick="openModal('create-receipt-modal')" class="inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition text-xs sm:text-sm">
-                <i class="fa-solid fa-file-circle-plus ml-2"></i>
-                إصدار وصل استلام جديد
-            </button>
-            <button onclick="openModal('company-logo-modal')" class="inline-flex items-center bg-white hover:bg-slate-100 border border-slate-300 text-slate-700 font-bold px-3 py-2.5 rounded-xl text-xs transition">
-                <i class="fa-solid fa-building-gear ml-1.5 text-indigo-600"></i>
-                تعديل اسم وشعار المقر
-            </button>
-        </div>
-    </div>
-
-    <!-- Company Branding Banner (Logo Status) -->
-    <div class="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-3xl p-5 sm:p-6 text-white shadow-xl flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div class="flex items-center space-x-4 space-x-reverse">
-            <div class="h-20 w-28 rounded-2xl bg-white border border-white/20 flex items-center justify-center p-1 overflow-hidden shrink-0 shadow-lg">
-                <?php if (!empty($company['logo']) && file_exists(APP_PATH . '/' . $company['logo'])): ?>
-                    <img src="<?= htmlspecialchars($company['logo']) ?>" alt="شعار الشركة" class="max-w-full max-h-full w-auto h-auto object-contain">
-                <?php else: ?>
-                    <i class="fa-solid fa-building text-3xl text-slate-300"></i>
-                <?php endif; ?>
-            </div>
-            <div>
-                <span class="text-xs font-bold text-amber-300">شعار واسم المقر المسجل على الإيصالات والفواتير</span>
-                <h3 class="text-xl font-black mt-0.5 text-white"><?= htmlspecialchars($company['name'] ?? 'شركتي') ?></h3>
-                <p class="text-xs text-slate-300 mt-0.5">
-                    هاتف المقر: <span class="font-bold text-slate-100 font-mono"><?= !empty($company['phone']) ? htmlspecialchars($company['phone']) : 'غير محدد' ?></span>
-                    &nbsp;|&nbsp;
-                    المستلم المسجل: <span class="font-bold text-emerald-400"><?= htmlspecialchars($currentUser['name']) ?></span>
-                </p>
-            </div>
-        </div>
-        <div class="flex items-center space-x-2 space-x-reverse">
-            <button onclick="openModal('company-logo-modal')" class="bg-white/15 hover:bg-white/25 text-white border border-white/20 font-bold text-xs px-4 py-2.5 rounded-xl transition flex items-center">
-                <i class="fa-solid fa-pen-to-square ml-1.5"></i> تعديل اسم المقر والشعار
-            </button>
+            <?php if (!isViewOnly()): ?>
+                <a href="receipt_create.php" class="inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition text-xs sm:text-sm">
+                    <i class="fa-solid fa-file-circle-plus ml-2"></i>
+                    إصدار وصل استلام جديد
+                </a>
+            <?php else: ?>
+                <span class="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-black bg-amber-100 text-amber-800 border border-amber-300">
+                    <i class="fa-solid fa-eye ml-1.5"></i> وضع المشاهدة فقط
+                </span>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -260,7 +184,7 @@ require_once __DIR__ . '/includes/header.php';
         <div class="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs flex items-center justify-between">
             <div>
                 <p class="text-xs font-bold text-slate-500">إجمالي المبالغ المستلمة</p>
-                <p class="text-2xl font-black text-emerald-600 mt-1"><?= formatMoney($totalCollectedAmount, $currency) ?></p>
+                <p class="text-2xl font-black text-emerald-600 mt-1"><?= canViewBalances() ? formatMoney($totalCollectedAmount, $currency) : '****' ?></p>
                 <span class="text-[11px] text-slate-400">بحسب فترة البحث</span>
             </div>
             <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-xl">
@@ -317,8 +241,9 @@ require_once __DIR__ . '/includes/header.php';
         </form>
     </div>
 
-    <!-- Receipts Table -->
-    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+    <!-- Receipts Table Section -->
+    <!-- Desktop View (Hidden on Mobile) -->
+    <div class="hidden md:block bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
         <div class="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between">
             <h3 class="font-black text-slate-800 text-base">سجل إيصالات استلام النقدية</h3>
             <span class="text-xs text-slate-400"><?= count($receiptsList) ?> إيصال مسجل</span>
@@ -336,13 +261,14 @@ require_once __DIR__ . '/includes/header.php';
                         <th class="p-3.5">بيان وسبب الاستلام</th>
                         <th class="p-3.5">المستلم</th>
                         <th class="p-3.5">حالة الخزنة</th>
-                        <th class="p-3.5 text-center">طباعة الوصل A4</th>
+                        <th class="p-3.5 text-center">التوقيع الإلكتروني</th>
+                        <th class="p-3.5 text-center">إجراءات وطباعة</th>
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-slate-100 text-slate-700">
                     <?php if (empty($receiptsList)): ?>
                         <tr>
-                            <td colspan="9" class="p-8 text-center text-slate-400">
+                            <td colspan="10" class="p-8 text-center text-slate-400">
                                 لا توجد إيصالات استلام مسجلة حتى الآن. اضغط على "إصدار وصل استلام جديد" لإنشاء أول إيصال.
                             </td>
                         </tr>
@@ -391,13 +317,27 @@ require_once __DIR__ . '/includes/header.php';
                                         </span>
                                     <?php endif; ?>
                                 </td>
+                                <!-- Electronic Signature Status Badge -->
+                                <td class="p-3.5 whitespace-nowrap text-center">
+                                    <?php if (($rec['signature_status'] ?? '') === 'signed'): ?>
+                                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-black bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-2xs" title="تم توقيع واستلام المبلغ من العميل">
+                                            <i class="fa-solid fa-signature ml-1 text-emerald-600"></i>
+                                            موقّع ومستلم ✓
+                                        </span>
+                                    <?php else: ?>
+                                        <a href="receipt_share.php?id=<?= $rec['id'] ?>" class="inline-flex items-center px-2.5 py-1 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 transition shadow-2xs" title="اضغط لفتح رابط التوقيع ومشاركته">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse ml-1.5"></span>
+                                            بانتظار التوقيع
+                                        </a>
+                                    <?php endif; ?>
+                                </td>
                                 <td class="p-3.5 whitespace-nowrap text-center">
                                     <div class="flex items-center justify-center space-x-1.5 space-x-reverse">
-                                        <a href="receipt_print.php?id=<?= $rec['id'] ?>" target="_blank" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-xs" title="طباعة 3 وصولات في ورقة A4">
-                                            <i class="fa-solid fa-print ml-1.5"></i> طباعة A4
+                                        <a href="receipt_share.php?id=<?= $rec['id'] ?>" class="inline-flex items-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-2.5 py-1.5 rounded-xl text-xs transition" title="رابط التوقيع ومشاركة الواتساب">
+                                            <i class="fa-solid fa-share-nodes ml-1 text-indigo-500"></i> رابط التوقيع
                                         </a>
-                                        <a href="<?= htmlspecialchars(getReceiptPublicUrl($rec)) ?>" target="_blank" class="inline-flex items-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-2.5 py-1.5 rounded-xl text-xs transition" title="عرض الفاتورة الإلكترونية عبر QR والرابط المباشر">
-                                            <i class="fa-solid fa-qrcode ml-1 text-xs"></i> أونلاين
+                                        <a href="receipt_print.php?id=<?= $rec['id'] ?>" target="_blank" class="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-xs" title="طباعة سند A4">
+                                            <i class="fa-solid fa-print ml-1.5"></i> طباعة A4
                                         </a>
                                     </div>
                                 </td>
@@ -407,6 +347,99 @@ require_once __DIR__ . '/includes/header.php';
                 </tbody>
             </table>
         </div>
+    </div>
+
+    <!-- Mobile Receipts Feed (Shown only on small screens) -->
+    <div class="block md:hidden space-y-3">
+        <?php if (empty($receiptsList)): ?>
+            <div class="bg-white rounded-2xl p-8 border border-slate-200/80 text-center shadow-xs">
+                <div class="w-14 h-14 rounded-2xl bg-indigo-50 text-indigo-500 flex items-center justify-center text-2xl mx-auto mb-3">
+                    <i class="fa-solid fa-receipt"></i>
+                </div>
+                <h3 class="font-bold text-slate-800 text-sm">لا توجد إيصالات استلام مسجلة</h3>
+                <p class="text-xs text-slate-400 mt-1">اضغط أدناه لإصدار أول سند استلام نقدية</p>
+                <a href="receipt_create.php" class="mt-3 inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
+                    <i class="fa-solid fa-plus-circle ml-1.5"></i> إصدار وصل استلام
+                </a>
+            </div>
+        <?php else: ?>
+            <div class="flex items-center justify-between px-1">
+                <span class="text-xs font-bold text-slate-600">إيصالات الاستلام (<?= count($receiptsList) ?>)</span>
+                <a href="receipt_create.php" class="text-xs font-bold text-brand-600 hover:underline flex items-center">
+                    <i class="fa-solid fa-plus-circle ml-1"></i> وصل جديد
+                </a>
+            </div>
+
+            <?php foreach ($receiptsList as $rec): 
+                $rCurr = $rec['currency'] ?? $currency;
+                $isSafe = !empty($rec['safe_transaction_id']);
+            ?>
+                <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-xs active:scale-[0.99] transition space-y-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-black font-mono bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                <i class="fa-solid fa-qrcode ml-1.5 text-indigo-500 text-[11px]"></i>
+                                <?= htmlspecialchars($rec['receipt_number']) ?>
+                            </span>
+                            <span class="text-[11px] text-slate-400 mr-2"><?= htmlspecialchars($rec['receipt_date']) ?></span>
+                            <?php if (($rec['signature_status'] ?? '') === 'signed'): ?>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-100 text-emerald-800 mr-1">
+                                    موقّع ✓
+                                </span>
+                            <?php else: ?>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800 mr-1">
+                                    بانتظار التوقيع
+                                </span>
+                            <?php endif; ?>
+                        </div>
+                        <div class="text-left">
+                            <span class="text-base font-black text-emerald-600 dir-ltr block">
+                                +<?= formatMoney($rec['amount'], $rCurr) ?>
+                            </span>
+                            <span class="text-[10px] text-slate-400 block"><?= htmlspecialchars($rec['payment_method']) ?></span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="flex items-center space-x-1.5 space-x-reverse mb-1">
+                            <i class="fa-solid fa-user-check text-xs text-slate-400"></i>
+                            <strong class="text-slate-900 text-sm font-extrabold"><?= htmlspecialchars($rec['customer_name']) ?></strong>
+                            <?php if (!empty($rec['customer_phone'])): ?>
+                                <span class="text-[11px] text-slate-400 font-mono">(<?= htmlspecialchars($rec['customer_phone']) ?>)</span>
+                            <?php endif; ?>
+                        </div>
+                        <h4 class="font-bold text-slate-800 text-xs leading-snug"><?= htmlspecialchars($rec['purpose']) ?></h4>
+                        <?php if (!empty($rec['notes'])): ?>
+                            <p class="text-[11px] text-slate-500 mt-1 bg-slate-50 p-2 rounded-xl border border-slate-100"><?= htmlspecialchars($rec['notes']) ?></p>
+                        <?php endif; ?>
+                    </div>
+
+                    <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+                        <div>
+                            <?php if ($isSafe): ?>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                    <i class="fa-solid fa-check ml-1"></i> بالخزنة
+                                </span>
+                            <?php else: ?>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600">
+                                    خارجي
+                                </span>
+                            <?php endif; ?>
+                            <span class="text-[10px] text-slate-400 mr-1.5">المستلم: <?= htmlspecialchars($rec['receiver_name'] ?? '') ?></span>
+                        </div>
+
+                        <div class="flex items-center space-x-2 space-x-reverse">
+                            <a href="receipt_share.php?id=<?= $rec['id'] ?>" class="inline-flex items-center bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 font-bold px-2.5 py-1.5 rounded-xl text-xs transition" title="رابط التوقيع والواتساب">
+                                <i class="fa-solid fa-share-nodes ml-1 text-xs"></i> توقيع
+                            </a>
+                            <a href="receipt_print.php?id=<?= $rec['id'] ?>" target="_blank" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-3 py-1.5 rounded-xl text-xs transition shadow-xs">
+                                <i class="fa-solid fa-print ml-1"></i> طباعة A4
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            <?php endforeach; ?>
+        <?php endif; ?>
     </div>
 </div>
 
@@ -439,7 +472,7 @@ require_once __DIR__ . '/includes/header.php';
                     <span class="text-slate-500 font-bold">المستلم المسؤول:</span>
                     <span class="font-black text-indigo-700 mr-1"><?= htmlspecialchars($currentUser['name']) ?></span>
                 </div>
-                <span class="text-[11px] text-slate-400 font-mono">الرقم المتوقع: <?= generateNextReceiptNumber($activeCompanyId) ?></span>
+                <span class="text-[11px] text-slate-400 font-mono">الرقم المتوقع: <?= generateNextReceiptNumber((int)($activeCompanyId ?? 1)) ?></span>
             </div>
 
             <!-- Amount & Currency Input -->
@@ -483,7 +516,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                     <label class="block text-xs font-bold text-slate-700 mb-1">طريقة الدفع</label>
-                    <select name="payment_method" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                    <select name="payment_method" id="rec_payment_method" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
                         <option value="نقداً كاش">نقداً كاش</option>
                         <option value="فودافون كاش / إنستاباي">فودافون كاش / إنستاباي</option>
                         <option value="تحويل بنكي">تحويل بنكي</option>
@@ -493,6 +526,27 @@ require_once __DIR__ . '/includes/header.php';
                 <div>
                     <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ الاستلام</label>
                     <input type="date" name="receipt_date" value="<?= date('Y-m-d') ?>" required class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Cheque & Bank Details -->
+            <div class="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <span class="text-xs font-bold text-slate-700 block flex items-center">
+                    <i class="fa-solid fa-money-check-dollar ml-1.5 text-rose-600"></i> بيانات الشيك أو الحوالة البنكية (تظهر في سند القبض):
+                </span>
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 mb-1">رقم الشيك / الحوالة</label>
+                        <input type="text" name="cheque_number" placeholder="مثال: 948271" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 mb-1">اسم البنك</label>
+                        <input type="text" name="bank_name" placeholder="مثال: الراجحي / الأهلي / مصر" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-600 mb-1">تاريخ الاستحقاق</label>
+                        <input type="date" name="cheque_date" class="w-full bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 text-xs font-mono focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                    </div>
                 </div>
             </div>
 
@@ -521,83 +575,6 @@ require_once __DIR__ . '/includes/header.php';
                     تأكيد وإصدار الوصل والطباعة فوراً
                 </button>
                 <button type="button" onclick="closeModal('create-receipt-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-xs">
-                    إلغاء
-                </button>
-            </div>
-        </form>
-    </div>
-</div>
-
-<!-- COMPANY BRANDING & LOGO MODAL -->
-<div id="company-logo-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
-    <div class="modal-backdrop fixed inset-0"></div>
-    <div class="relative bg-white rounded-3xl shadow-2xl max-w-lg w-full p-6 sm:p-8 modal-animate-enter z-10 border border-slate-100">
-        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
-            <div class="flex items-center space-x-2 space-x-reverse">
-                <div class="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
-                    <i class="fa-solid fa-building-gear"></i>
-                </div>
-                <h3 class="font-black text-slate-800 text-lg">إعدادات اسم المقر والشعار</h3>
-            </div>
-            <button onclick="closeModal('company-logo-modal')" class="text-slate-400 hover:text-slate-600 text-lg">
-                <i class="fa-solid fa-xmark"></i>
-            </button>
-        </div>
-
-        <form action="receipts.php" method="POST" enctype="multipart/form-data" class="space-y-4">
-            <?= getCSRFInput() ?>
-            <input type="hidden" name="action" value="update_company_settings">
-
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">اسم المقر / الشركة (الذي يظهر بأعلى الإيصال) <span class="text-red-500">*</span></label>
-                <input type="text" name="company_name" value="<?= htmlspecialchars($company['name']) ?>" required placeholder="مثال: Vision Trading أو مؤسسة الرؤية للتجارة" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-black text-slate-900 focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
-            </div>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم هاتف المقر (يظهر تحت الاسم)</label>
-                    <input type="text" name="company_phone" value="<?= htmlspecialchars($company['phone'] ?? '') ?>" placeholder="010xxxxxxxx" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">العملة الافتراضية</label>
-                    <select name="company_currency" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-brand-500 focus:outline-none">
-                        <option value="ج.م" <?= ($company['currency'] ?? 'ج.م') === 'ج.م' ? 'selected' : '' ?>>ج.م (جنيه مصري)</option>
-                        <option value="$" <?= ($company['currency'] ?? 'ج.م') === '$' ? 'selected' : '' ?>>$ (دولار أمريكي)</option>
-                        <option value="ر.س" <?= ($company['currency'] ?? 'ج.م') === 'ر.س' ? 'selected' : '' ?>>ر.س (ريال سعودي)</option>
-                        <option value="€" <?= ($company['currency'] ?? 'ج.م') === '€' ? 'selected' : '' ?>>€ (يورو)</option>
-                        <option value="د.إ" <?= ($company['currency'] ?? 'ج.م') === 'د.إ' ? 'selected' : '' ?>>د.إ (درهم إماراتي)</option>
-                        <option value="د.ك" <?= ($company['currency'] ?? 'ج.م') === 'د.ك' ? 'selected' : '' ?>>د.ك (دينار كويتي)</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Logo Upload Area -->
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">شعار المقر (Logo) المطبوع على الإيصالات والفواتير</label>
-                <div class="p-4 border-2 border-dashed border-slate-300 rounded-2xl bg-slate-50 text-center">
-                    <?php if (!empty($company['logo']) && file_exists(APP_PATH . '/' . $company['logo'])): ?>
-                        <div class="h-20 w-32 mx-auto bg-white border border-slate-200 rounded-xl flex items-center justify-center p-1 mb-2 shadow-xs">
-                            <img src="<?= htmlspecialchars($company['logo']) ?>" alt="الشعار الحالي" class="max-w-full max-h-full object-contain">
-                        </div>
-                        <p class="text-xs text-slate-500 font-bold mb-2">الشعار الحالي محفوظ بحجم كبير</p>
-                        <div class="flex items-center justify-center space-x-2 space-x-reverse mb-3">
-                            <input type="checkbox" id="remove_logo" name="remove_logo" value="1" class="rounded text-rose-600 focus:ring-rose-500 w-4 h-4">
-                            <label for="remove_logo" class="text-xs text-rose-600 font-bold cursor-pointer">حذف الشعار والعودة للافتراضي</label>
-                        </div>
-                    <?php else: ?>
-                        <i class="fa-solid fa-cloud-arrow-up text-3xl text-slate-400 mb-2"></i>
-                        <p class="text-xs text-slate-500 font-bold mb-1">اختر صورة الشعار من جهازك</p>
-                    <?php endif; ?>
-                    <input type="file" name="company_logo" accept="image/*" class="text-xs text-slate-500 mx-auto block">
-                    <p class="text-[11px] text-slate-400 mt-2">اتركه فارغاً إذا كنت لا ترغب بتغيير الشعار الحالي. الصيغ المدعومة: PNG, JPG, WEBP, SVG</p>
-                </div>
-            </div>
-
-            <div class="flex items-center space-x-2 space-x-reverse pt-2">
-                <button type="submit" class="flex-1 bg-brand-600 hover:bg-brand-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-xs">
-                    حفظ وتحديث بيانات المقر والشعار
-                </button>
-                <button type="button" onclick="closeModal('company-logo-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-xs">
                     إلغاء
                 </button>
             </div>

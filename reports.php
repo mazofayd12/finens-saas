@@ -2,11 +2,24 @@
 require_once __DIR__ . '/config/app.php';
 requireLogin();
 requireModule('reports');
+requirePermission('reports');
+
+if (!canViewBalances()) {
+    setFlash('error', 'ليس لديك صلاحية لعرض التقارير المالية والسيولة.');
+    header('Location: dashboard.php');
+    exit;
+}
 
 $currentUser = getCurrentUser();
-$activeCompanyId = (int)$currentUser['active_company_id'];
-$currency = $currentUser['currency'] ?? 'ج.م';
 $db = getDBConnection();
+$activeCompanyId = (int)($currentUser['active_company_id'] ?? 0);
+if ($activeCompanyId <= 0 && isSuperAdmin()) {
+    $firstComp = $db->query("SELECT id FROM companies WHERE is_active = 1 LIMIT 1")->fetch();
+    if ($firstComp) {
+        $activeCompanyId = (int)$firstComp['id'];
+    }
+}
+$currency = $currentUser['currency'] ?? 'ج.م';
 $safe = getCompanyMainSafe($activeCompanyId);
 
 // Filter by Month, custom date, or currency
@@ -61,6 +74,21 @@ $catStmt = $db->prepare("
 ");
 $catStmt->execute([':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo]);
 $categoryBreakdown = $catStmt->fetchAll();
+
+// Project breakdown (if module active)
+$projectBreakdown = [];
+if (hasModule('projects')) {
+    $prjStmt = $db->prepare("
+        SELECT p.name, COALESCE(SUM(e.amount), 0) as total_amount, COUNT(e.id) as cnt
+        FROM projects p
+        LEFT JOIN expenses e ON p.id = e.project_id AND e.expense_date BETWEEN :from AND :to
+        WHERE p.company_id = :cid
+        GROUP BY p.id
+        ORDER BY total_amount DESC
+    ");
+    $prjStmt->execute([':cid' => $activeCompanyId, ':from' => $filterFrom, ':to' => $filterTo]);
+    $projectBreakdown = $prjStmt->fetchAll();
+}
 
 // Monthly Comparison (Last 6 Months)
 $monthlyStats = [];
@@ -360,6 +388,40 @@ require_once __DIR__ . '/includes/header.php';
             <?php endforeach; ?>
         </div>
     </div>
+
+    <!-- Real Estate Projects Breakdown Section (if module active) -->
+    <?php if (hasModule('projects') && !empty($projectBreakdown)): ?>
+        <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-5 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div class="flex items-center space-x-2 space-x-reverse">
+                    <span class="w-8 h-8 rounded-lg bg-amber-500 text-white flex items-center justify-center font-bold text-sm">
+                        <i class="fa-solid fa-city"></i>
+                    </span>
+                    <div>
+                        <h3 class="font-black text-slate-800 text-base">تقرير مصروفات المشاريع العقارية للفترة</h3>
+                        <p class="text-xs text-slate-400">إجمالي النفقات والخصومات لكل مشروع عقاري</p>
+                    </div>
+                </div>
+                <a href="projects.php" class="text-xs font-bold text-amber-600 hover:underline">
+                    لوحة المشاريع &larr;
+                </a>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <?php foreach ($projectBreakdown as $pb): ?>
+                    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex items-center justify-between">
+                        <div>
+                            <h4 class="font-bold text-slate-800 text-sm"><?= htmlspecialchars($pb['name']) ?></h4>
+                            <span class="text-[11px] text-slate-400 font-medium"><?= $pb['cnt'] ?> فاتورة مسجلة</span>
+                        </div>
+                        <div class="text-left">
+                            <span class="text-sm font-black text-rose-600 block"><?= formatMoney($pb['total_amount'], $reportCurrency) ?></span>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        </div>
+    <?php endif; ?>
 </div>
 
 <script>

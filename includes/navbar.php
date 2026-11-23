@@ -2,7 +2,7 @@
 $isSuper = isSuperAdmin();
 $isImpersonating = !empty($currentUser['is_impersonating']);
 ?>
-<header id="app-header" class="no-print bg-white/95 backdrop-blur-md border-b border-slate-200 fixed md:sticky top-0 inset-x-0 z-30 shadow-xs safe-area-top">
+<header id="app-header" class="no-print bg-white/95 backdrop-blur-md border-b border-slate-200 sticky top-0 z-30 shadow-xs safe-area-top w-full">
     <div class="px-4 sm:px-6 py-2.5 sm:py-3 flex items-center justify-between min-h-[3.75rem]">
         <!-- Right side: Brand & Mobile toggle & Context Badge -->
         <div class="flex items-center space-x-3 space-x-reverse">
@@ -28,7 +28,12 @@ $isImpersonating = !empty($currentUser['is_impersonating']);
                                 <?= htmlspecialchars($currentUser['company_name'] ?? 'شركتي') ?>
                             </span>
                             <span class="text-[11px] text-slate-500 font-medium block">
-                                <?= htmlspecialchars($currentUser['name']) ?> (<?= $currentUser['role'] === 'company_admin' ? 'مدير الشركة' : ($currentUser['role'] === 'data_entry' ? 'مدخل بيانات' : 'سوبر أدمن') ?>)
+                                <?= htmlspecialchars($currentUser['name']) ?> (<?= $currentUser['role'] === 'company_admin' ? 'مدير الشركة' : ($currentUser['role'] === 'data_entry' ? 'موظف' : 'سوبر أدمن') ?>)
+                                <?php if (isViewOnly()): ?>
+                                    <span class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-black bg-amber-100 text-amber-800 border border-amber-300 mr-1">
+                                        <i class="fa-solid fa-eye ml-1 text-[8px]"></i>مشاهدة فقط
+                                    </span>
+                                <?php endif; ?>
                             </span>
                         </div>
                     </div>
@@ -45,8 +50,8 @@ $isImpersonating = !empty($currentUser['is_impersonating']);
 
         <!-- Left side: Actions & Safe Balance -->
         <div class="flex items-center space-x-3 space-x-reverse">
-            <!-- Safe Balance Pill (if in company and has treasury) -->
-            <?php if (!empty($mainSafe) && hasModule('treasury')): ?>
+            <!-- Safe Balance Pill (if in company, has treasury, and has permission to view balances) -->
+            <?php if (!empty($mainSafe) && hasModule('treasury') && canUser('treasury') && canViewBalances()): ?>
                 <?php 
                 $navBals = $mainSafe['balances'] ?? [$currentUser['currency'] ?? 'ج.م' => $mainSafe['balance']];
                 $activeNavBals = array_filter($navBals, fn($b) => abs($b) > 0.001);
@@ -63,22 +68,29 @@ $isImpersonating = !empty($currentUser['is_impersonating']);
                         </span>
                     <?php endforeach; ?>
                 </a>
+            <?php endif; ?>
 
-                <!-- Quick Action Buttons -->
-                <a href="receipts.php" class="hidden lg:inline-flex items-center bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+            <!-- Quick Action: وصل استلام نقدي (سند قبض / صرف) -->
+            <?php if (!isViewOnly() && (canUser('receipts') || canUser('expenses') || canUser('projects'))): ?>
+                <button type="button" onclick="openModal('cash-voucher-modal')" class="hidden md:inline-flex items-center bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
                     <i class="fa-solid fa-receipt ml-1.5"></i>
-                    وصل استلام
-                </a>
+                    وصل استلام نقدي
+                    <i class="fa-solid fa-chevron-down mr-1 text-[10px] opacity-75"></i>
+                </button>
+            <?php endif; ?>
 
+            <?php if (!isViewOnly() && hasModule('treasury') && canUser('treasury') && canViewBalances()): ?>
                 <button onclick="openModal('quick-deposit-modal')" class="hidden md:inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
                     <i class="fa-solid fa-circle-plus ml-1.5"></i>
                     إيداع سريع
                 </button>
+            <?php endif; ?>
 
-                <button onclick="openModal('quick-expense-modal')" class="hidden md:inline-flex items-center bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
+            <?php if (!isViewOnly() && hasModule('expenses') && canUser('expenses')): ?>
+                <a href="expense_create.php" class="hidden md:inline-flex items-center bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition">
                     <i class="fa-solid fa-circle-minus ml-1.5"></i>
                     مصروف جديد
-                </button>
+                </a>
             <?php endif; ?>
 
             <!-- User Menu & Logout -->

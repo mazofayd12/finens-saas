@@ -1,0 +1,8 @@
+RewriteEngine On
+
+# Redirect /erp to /erp/ with trailing slash
+RewriteRule ^erp$ /erp/ [R=301,L]
+
+# Standard options
+Options -Indexes
+DirectoryIndex index.php

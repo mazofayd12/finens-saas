@@ -89,6 +89,10 @@ $expStmt = $db->prepare($query);
 $expStmt->execute($params);
 $expenses = $expStmt->fetchAll();
 
+// Batch fetch attachments for PDF export
+$allExpIds = array_column($expenses, 'id');
+$expenseAttachmentsGrouped = getBatchExpenseAttachments($allExpIds);
+
 // Calculations
 $totalExpenses = 0;
 $totalTax = 0;
@@ -344,15 +348,32 @@ $autoPrint = isset($_GET['autoprint']) && $_GET['autoprint'] === '1';
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-2 text-center whitespace-nowrap">
-                                    <?php if (!empty($row['invoice_attachment']) && file_exists(APP_PATH . '/' . $row['invoice_attachment'])): ?>
-                                        <?php $ext = strtolower(pathinfo($row['invoice_attachment'], PATHINFO_EXTENSION)); ?>
-                                        <?php if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])): ?>
-                                            <img src="<?= htmlspecialchars($row['invoice_attachment']) ?>" alt="إيصال" class="w-8 h-8 object-cover rounded mx-auto border border-slate-300">
+                                    <?php 
+                                    $rowAtts = $expenseAttachmentsGrouped[$row['id']] ?? [];
+                                    if (empty($rowAtts) && !empty($row['invoice_attachment']) && file_exists(APP_PATH . '/' . $row['invoice_attachment'])) {
+                                        $rowAtts = [
+                                            [
+                                                'id' => 0,
+                                                'file_path' => $row['invoice_attachment'],
+                                                'file_ext' => strtolower(pathinfo($row['invoice_attachment'], PATHINFO_EXTENSION))
+                                            ]
+                                        ];
+                                    }
+                                    $attCount = count($rowAtts);
+                                    ?>
+                                    <?php if ($attCount === 0): ?>
+                                        <span class="text-slate-300">-</span>
+                                    <?php elseif ($attCount === 1): ?>
+                                        <?php $singleAtt = $rowAtts[0]; ?>
+                                        <?php if (in_array($singleAtt['file_ext'], ['jpg', 'jpeg', 'png', 'webp'])): ?>
+                                            <img src="<?= htmlspecialchars($singleAtt['file_path']) ?>" alt="إيصال" class="w-8 h-8 object-cover rounded mx-auto border border-slate-300">
                                         <?php else: ?>
-                                            <span class="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.5 rounded">مرفق PDF</span>
+                                            <span class="text-[9px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-1 py-0.5 rounded">PDF</span>
                                         <?php endif; ?>
                                     <?php else: ?>
-                                        <span class="text-slate-300">-</span>
+                                        <span class="text-[9px] font-black text-indigo-800 bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded">
+                                            <?= $attCount ?> فواتير
+                                        </span>
                                     <?php endif; ?>
                                 </td>
                                 <td class="p-2 text-center whitespace-nowrap">

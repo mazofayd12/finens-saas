@@ -17,6 +17,7 @@ if ($activeCompanyId <= 0 && isSuperAdmin()) {
     }
 }
 $currency = $currentUser['currency'] ?? 'ر.س';
+ensureProjectBlueprintsTable();
 
 // Handle POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -275,9 +276,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
                 $db->commit();
+
+                // 5. Save Blueprint files if attached
+                $bpUploadedCount = 0;
+                $bpType = trim($_POST['blueprint_type'] ?? 'عام');
+                $bpNotes = trim($_POST['blueprint_notes'] ?? '');
+                if (isset($_FILES['blueprint_files'])) {
+                    $bpUploadedCount = saveMultipleProjectBlueprints(
+                        $activeCompanyId,
+                        $projectId,
+                        (int)$currentUser['id'],
+                        $_FILES['blueprint_files'],
+                        $bpType,
+                        $bpNotes
+                    );
+                }
+
                 $typeMsg = $projectType === 'without_capital' ? 'مشروع بدون رأس مال (مصروفات لحساب عميل)' : 'مشروع برأس مال معتمد';
-                setFlash('success', "تم إنشاء المشروع العقاري ({$name}) كـ {$typeMsg} بنجاح!");
-                header('Location: project_view.php?id=' . $projectId);
+                $bpMsg = $bpUploadedCount > 0 ? " مع إرفاق ({$bpUploadedCount}) مخطط(ات) هندسية" : "";
+                setFlash('success', "تم إنشاء المشروع العقاري ({$name}) كـ {$typeMsg}{$bpMsg} بنجاح!");
+                $redirectUrl = 'project_view.php?id=' . $projectId . ($bpUploadedCount > 0 ? '&tab=tab-blueprints' : '');
+                header('Location: ' . $redirectUrl);
                 exit;
             } catch (Exception $e) {
                 if ($db->inTransaction()) {
@@ -372,31 +391,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $safe = getProjectSafe($activeCompanyId, $projectId, $prj['name']);
 
-                // Handle invoice file upload
+                // Handle invoice file upload payload (single or multiple files)
                 $attachmentPath = null;
-                if (isset($_FILES['invoice_file']) && $_FILES['invoice_file']['error'] === UPLOAD_ERR_OK) {
-                    $fileTmp = $_FILES['invoice_file']['tmp_name'];
-                    $fileName = $_FILES['invoice_file']['name'];
-                    $fileSize = $_FILES['invoice_file']['size'];
-                    $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-
-                    $allowed = ['jpg', 'jpeg', 'png', 'webp', 'pdf'];
-                    if (!in_array($ext, $allowed)) {
-                        throw new Exception('نوع الملف المرفق غير مدعوم. الصيغ المدعومة: JPG, PNG, WEBP, PDF');
-                    }
-                    if ($fileSize > 15 * 1024 * 1024) {
-                        throw new Exception('حجم ملف الفاتورة كبير جداً، الحد الأقصى 15 ميجابايت.');
-                    }
-
-                    $uploadDir = APP_PATH . '/assets/uploads/invoices/';
-                    if (!is_dir($uploadDir)) {
-                        mkdir($uploadDir, 0777, true);
-                    }
-                    $newFileName = 'inv_' . $projectId . '_' . time() . '_' . rand(100, 999) . '.' . $ext;
-                    if (move_uploaded_file($fileTmp, $uploadDir . $newFileName)) {
-                        $attachmentPath = 'assets/uploads/invoices/' . $newFileName;
-                    }
-                }
+                $uploadedFilesPayload = !empty($_FILES['invoice_files']['name']) ? $_FILES['invoice_files'] : (!empty($_FILES['invoice_file']['name']) ? $_FILES['invoice_file'] : null);
 
                 // Category name
                 $catName = $title;
@@ -471,6 +468,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':now' => date('Y-m-d H:i:s')
                 ]);
                 $expenseId = (int)$db->lastInsertId();
+
+                // Save multiple uploaded invoices into expense_attachments
+                if (!empty($uploadedFilesPayload)) {
+                    saveExpenseUploadedFiles($expenseId, $activeCompanyId, $uploadedFilesPayload, $projectId);
+                }
 
                 $db->commit();
 
@@ -823,7 +825,7 @@ require_once __DIR__ . '/includes/header.php';
         </div>
 
         <!-- Form Body with Clean Scrolling -->
-        <form action="projects.php" method="POST" class="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
+        <form action="projects.php" method="POST" enctype="multipart/form-data" class="p-5 sm:p-6 overflow-y-auto space-y-5 flex-1">
             <?= getCSRFInput() ?>
             <input type="hidden" name="action" value="create_project">
             <input type="hidden" id="modal_project_type" name="project_type" value="with_capital">
@@ -995,7 +997,58 @@ require_once __DIR__ . '/includes/header.php';
                 </div>
             </div>
 
-            <!-- 5. Additional Notes -->
+            <!-- 5. Engineering Blueprints & Project Files (Optional) -->
+            <div class="rounded-2xl border border-cyan-200/90 bg-gradient-to-br from-cyan-50/40 via-sky-50/30 to-slate-50/60 p-4 space-y-3">
+                <div class="flex items-center justify-between pb-2 border-b border-cyan-200/60">
+                    <div class="flex items-center space-x-2.5 space-x-reverse">
+                        <div class="w-8 h-8 rounded-xl bg-cyan-600 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                            <i class="fa-solid fa-compass-drafting"></i>
+                        </div>
+                        <div>
+                            <div class="flex items-center space-x-2 space-x-reverse">
+                                <span class="text-xs font-black text-slate-900">المخططات الهندسية وملفات المشروع</span>
+                                <span class="text-[10px] font-bold text-cyan-800 bg-cyan-100/80 px-2 py-0.5 rounded-md">اختياري</span>
+                            </div>
+                            <span class="text-[11px] text-slate-500 block">يمكنك إرفاق المخطط المعماري أو الإنشائي الآن، أو إضافته لاحقاً من داخل صفحة المشروع</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <div class="sm:col-span-2">
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">ملفات المخططات (PDF, CAD, صور, ZIP)</label>
+                        <div class="relative border-2 border-dashed border-cyan-300 hover:border-cyan-500 rounded-xl p-3 bg-white/80 transition-all text-center cursor-pointer group" onclick="document.getElementById('modal_blueprint_files').click()">
+                            <input type="file" id="modal_blueprint_files" name="blueprint_files[]" multiple accept=".pdf,.dwg,.dxf,.cad,.png,.jpg,.jpeg,.webp,.zip,.rar" class="hidden" onchange="previewSelectedBlueprints(this)">
+                            <div class="flex items-center justify-center space-x-2 space-x-reverse text-cyan-700 group-hover:text-cyan-800">
+                                <i class="fa-solid fa-cloud-arrow-up text-lg"></i>
+                                <span class="text-xs font-bold" id="blueprint_file_label">اضغط لاختيار ملفات المخططات (يمكنك اختيار أكثر من ملف)</span>
+                            </div>
+                            <span class="text-[10px] text-slate-400 block mt-1">يدعم صيغ PDF، أوتوكاد DWG/DXF، وصور المخططات JPG/PNG، وملفات ZIP</span>
+                        </div>
+                        <div id="blueprint_selected_list" class="mt-2 space-y-1 hidden"></div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[11px] font-bold text-slate-700 mb-1">تصنيف المخطط</label>
+                        <select name="blueprint_type" class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                            <option value="مخطط شامل" selected>مخطط شامل / عام</option>
+                            <option value="معماري">مخطط معماري</option>
+                            <option value="إنشائي">مخطط إنشائي</option>
+                            <option value="كهرباء (MEP)">مخطط كهرباء (MEP)</option>
+                            <option value="صحي / سباكة">مخطط صحي وسباكة</option>
+                            <option value="تكييف وميكانيكا">تكييف وميكانيكا</option>
+                            <option value="كروكي ورخصة">كروكي ورخصة بناء</option>
+                            <option value="ديكور وتشطيبات">ديكور وتشطيبات</option>
+                        </select>
+                        <div class="mt-2">
+                            <label class="block text-[10px] font-bold text-slate-500 mb-0.5">ملاحظة سريعة</label>
+                            <input type="text" name="blueprint_notes" placeholder="مثال: الإصدار المعتمد للبلدية" class="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-1.5 text-[11px] focus:ring-1 focus:ring-cyan-500 focus:outline-none">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. Additional Notes -->
             <div>
                 <label class="block text-xs font-bold text-slate-700 mb-1">تفاصيل وملاحظات المشروع <span class="text-[10px] text-slate-400 font-normal">(اختياري)</span></label>
                 <textarea name="description" rows="2" placeholder="مواصفات المشروع، العقد، أو أي شروط خاصة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none transition"></textarea>
@@ -1062,6 +1115,33 @@ require_once __DIR__ . '/includes/header.php';
                 const badge = document.getElementById('land_live_total');
                 if (badge) {
                     badge.textContent = 'الإجمالي: ' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ر.س';
+                }
+            }
+
+            function previewSelectedBlueprints(input) {
+                const list = document.getElementById('blueprint_selected_list');
+                const label = document.getElementById('blueprint_file_label');
+                if (!input.files || input.files.length === 0) {
+                    if (label) label.innerText = 'اضغط لاختيار ملفات المخططات (يمكنك اختيار أكثر من ملف)';
+                    if (list) { list.innerHTML = ''; list.classList.add('hidden'); }
+                    return;
+                }
+                if (label) label.innerText = 'تم اختيار ' + input.files.length + ' ملف/ملفات مخططات';
+                if (list) {
+                    list.innerHTML = '';
+                    list.classList.remove('hidden');
+                    Array.from(input.files).slice(0, 4).forEach(f => {
+                        const item = document.createElement('div');
+                        item.className = 'text-[11px] font-mono text-slate-700 bg-cyan-50 border border-cyan-200 px-2 py-1 rounded-lg flex items-center justify-between';
+                        item.innerHTML = '<span class="truncate"><i class="fa-solid fa-file-lines text-cyan-600 ml-1"></i> ' + f.name + '</span><span class="text-slate-400 text-[10px] shrink-0">' + (f.size / (1024*1024)).toFixed(2) + ' MB</span>';
+                        list.appendChild(item);
+                    });
+                    if (input.files.length > 4) {
+                        const extra = document.createElement('div');
+                        extra.className = 'text-[10px] text-cyan-800 font-bold';
+                        extra.innerText = '+ ' + (input.files.length - 4) + ' ملفات إضافية...';
+                        list.appendChild(extra);
+                    }
                 }
             }
         </script>

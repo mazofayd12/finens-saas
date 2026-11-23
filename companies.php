@@ -46,6 +46,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $modExpenses = isset($_POST['module_expenses']) ? 1 : 0;
         $modHr = isset($_POST['module_hr']) ? 1 : 0;
         $modReports = isset($_POST['module_reports']) ? 1 : 0;
+        $modProjects = isset($_POST['module_projects']) ? 1 : 0;
 
         // Admin account info
         $adminName = trim($_POST['admin_name'] ?? '');
@@ -73,8 +74,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     try {
                         // 1. Insert Company
                         $insCo = $db->prepare("
-                            INSERT INTO companies (name, code, phone, currency, is_active, module_treasury, module_expenses, module_hr, module_reports, created_at)
-                            VALUES (:name, :code, :phone, :cur, 1, :mt, :me, :mhr, :mr, :now)
+                            INSERT INTO companies (name, code, phone, currency, is_active, module_treasury, module_expenses, module_hr, module_reports, module_projects, created_at)
+                            VALUES (:name, :code, :phone, :cur, 1, :mt, :me, :mhr, :mr, :mp, :now)
                         ");
                         $insCo->execute([
                             ':name' => $name,
@@ -85,6 +86,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ':me' => $modExpenses,
                             ':mhr' => $modHr,
                             ':mr' => $modReports,
+                            ':mp' => $modProjects,
                             ':now' => $now
                         ]);
                         $companyId = (int)$db->lastInsertId();
@@ -164,6 +166,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $modExpenses = isset($_POST['module_expenses']) ? 1 : 0;
         $modHr = isset($_POST['module_hr']) ? 1 : 0;
         $modReports = isset($_POST['module_reports']) ? 1 : 0;
+        $modProjects = isset($_POST['module_projects']) ? 1 : 0;
 
         if (empty($name)) {
             setFlash('error', 'اسم الشركة مطلوب');
@@ -171,7 +174,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $upd = $db->prepare("
                 UPDATE companies 
                 SET name = :name, phone = :phone, currency = :cur, is_active = :act,
-                    module_treasury = :mt, module_expenses = :me, module_hr = :mhr, module_reports = :mr
+                    module_treasury = :mt, module_expenses = :me, module_hr = :mhr, module_reports = :mr,
+                    module_projects = :mp
                 WHERE id = :id
             ");
             $upd->execute([
@@ -183,6 +187,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':me' => $modExpenses,
                 ':mhr' => $modHr,
                 ':mr' => $modReports,
+                ':mp' => $modProjects,
                 ':id' => $id
             ]);
             setFlash('success', 'تم تحديث بيانات الشركة والموديولات بنجاح.');
@@ -210,12 +215,18 @@ require_once __DIR__ . '/includes/header.php';
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <h1 class="text-2xl font-black text-slate-900">إدارة الشركات والموديولات (SaaS)</h1>
-            <p class="text-xs text-slate-500 mt-1">إنشاء الشركات، تحديد اشتراك الموديولات، والتحكم بالحسابات</p>
+            <p class="text-xs text-slate-500 mt-1">إنشاء الشركات، تحديد اشتراك الموديولات، والتحكم بالحسابات والنسخ الاحتياطي</p>
         </div>
-        <button onclick="openModal('add-company-modal')" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition text-sm">
-            <i class="fa-solid fa-plus-circle ml-2"></i>
-            إضافة شركة جديدة
-        </button>
+        <div class="flex items-center space-x-2 space-x-reverse">
+            <a href="backup.php" class="inline-flex items-center bg-slate-900 hover:bg-slate-800 text-white font-bold px-4 py-2.5 rounded-xl shadow-xs transition text-xs">
+                <i class="fa-solid fa-cloud-arrow-down ml-2 text-emerald-400"></i>
+                إدارة النسخ الاحتياطي (Backup)
+            </a>
+            <button onclick="openModal('add-company-modal')" class="inline-flex items-center bg-brand-600 hover:bg-brand-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition text-xs">
+                <i class="fa-solid fa-plus-circle ml-2"></i>
+                إضافة شركة جديدة
+            </button>
+        </div>
     </div>
 
     <!-- Companies Table / Cards -->
@@ -263,6 +274,9 @@ require_once __DIR__ . '/includes/header.php';
                                     <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= (int)$comp['module_reports'] === 1 ? 'bg-blue-100 text-blue-800' : 'bg-slate-100 text-slate-400 line-through' ?>">
                                         التقارير
                                     </span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= (int)($comp['module_projects'] ?? 0) === 1 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-400 line-through' ?>">
+                                        <i class="fa-solid fa-helmet-safety ml-0.5 text-[9px]"></i> المشاريع والعقارات
+                                    </span>
                                 </div>
                             </td>
                             <td class="p-4 whitespace-nowrap">
@@ -281,6 +295,12 @@ require_once __DIR__ . '/includes/header.php';
                                     <a href="companies.php?impersonate=<?= $comp['id'] ?>" class="bg-brand-50 hover:bg-brand-100 text-brand-700 font-bold px-2.5 py-1.5 rounded-lg text-xs transition flex items-center">
                                         <i class="fa-solid fa-arrow-right-to-bracket ml-1"></i>
                                         دخول كمدير
+                                    </a>
+                                    <a href="backup.php?action=export&company_id=<?= $comp['id'] ?>" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 p-1.5 rounded-lg text-xs transition font-bold" title="تحميل نسخة احتياطية (Export .json)">
+                                        <i class="fa-solid fa-download"></i>
+                                    </a>
+                                    <a href="backup.php?target_company_id=<?= $comp['id'] ?>" class="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 p-1.5 rounded-lg text-xs transition font-bold" title="استعادة أو إدارة النسخ الاحتياطي">
+                                        <i class="fa-solid fa-clock-rotate-left"></i>
                                     </a>
                                     <button onclick='editCompany(<?= json_encode($comp) ?>)' class="bg-slate-100 hover:bg-slate-200 text-slate-700 p-1.5 rounded-lg text-xs transition" title="تعديل">
                                         <i class="fa-solid fa-pen-to-square"></i>
@@ -365,6 +385,10 @@ require_once __DIR__ . '/includes/header.php';
                     <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
                         <input type="checkbox" name="module_hr" value="1" class="rounded text-purple-600 focus:ring-purple-500 w-4 h-4">
                         <span class="font-bold text-purple-800">الموارد البشرية والرواتب (HR)</span>
+                    </label>
+                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer col-span-2 p-2 bg-amber-50 rounded-xl border border-amber-200">
+                        <input type="checkbox" name="module_projects" value="1" class="rounded text-amber-600 focus:ring-amber-500 w-4 h-4">
+                        <span class="font-black text-amber-900">🏗️ موديول شركات التطوير العقاري والمشاريع (Real Estate & Multi-Safes)</span>
                     </label>
                 </div>
             </div>
@@ -452,6 +476,10 @@ require_once __DIR__ . '/includes/header.php';
                         <input type="checkbox" id="edit_mod_hr" name="module_hr" value="1" class="rounded text-purple-600 focus:ring-purple-500 w-4 h-4">
                         <span class="font-bold text-purple-800">الموارد البشرية والرواتب (HR)</span>
                     </label>
+                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer col-span-2 p-2 bg-amber-50 rounded-xl border border-amber-200">
+                        <input type="checkbox" id="edit_mod_projects" name="module_projects" value="1" class="rounded text-amber-600 focus:ring-amber-500 w-4 h-4">
+                        <span class="font-black text-amber-900">🏗️ موديول شركات التطوير العقاري والمشاريع (Real Estate & Multi-Safes)</span>
+                    </label>
                 </div>
             </div>
 
@@ -482,6 +510,7 @@ function editCompany(comp) {
     document.getElementById('edit_mod_expenses').checked = parseInt(comp.module_expenses) === 1;
     document.getElementById('edit_mod_hr').checked = parseInt(comp.module_hr) === 1;
     document.getElementById('edit_mod_reports').checked = parseInt(comp.module_reports) === 1;
+    document.getElementById('edit_mod_projects').checked = parseInt(comp.module_projects || 0) === 1;
     document.getElementById('edit_is_active').checked = parseInt(comp.is_active) === 1;
     openModal('edit-company-modal');
 }

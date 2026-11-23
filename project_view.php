@@ -211,18 +211,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         $attachmentPath = $exp['invoice_attachment'];
-        if (isset($_FILES['invoice_file']) && $_FILES['invoice_file']['error'] === UPLOAD_ERR_OK) {
-            $ext = strtolower(pathinfo($_FILES['invoice_file']['name'], PATHINFO_EXTENSION));
-            if (!in_array($ext, ['jpg', 'jpeg', 'png', 'webp', 'pdf'])) {
-                setFlash('error', 'نوع الملف غير مدعوم. الصيغ المدعومة: JPG, PNG, WEBP, PDF');
-                header('Location: project_view.php?id=' . $projectId);
-                exit;
-            }
-            $uploadDir = APP_PATH . '/assets/uploads/invoices/';
-            if (!is_dir($uploadDir)) mkdir($uploadDir, 0777, true);
-            $newFileName = 'inv_prj_' . $projectId . '_' . time() . '_' . rand(100, 999) . '.' . $ext;
-            if (move_uploaded_file($_FILES['invoice_file']['tmp_name'], $uploadDir . $newFileName)) {
-                $attachmentPath = 'assets/uploads/invoices/' . $newFileName;
+        $uploadedConfFiles = !empty($_FILES['invoice_files']['name']) ? $_FILES['invoice_files'] : (!empty($_FILES['invoice_file']['name']) ? $_FILES['invoice_file'] : null);
+        if (!empty($uploadedConfFiles)) {
+            $savedConfAtts = saveExpenseUploadedFiles($expenseId, $activeCompanyId, $uploadedConfFiles, $projectId);
+            if (!empty($savedConfAtts)) {
+                $attachmentPath = $savedConfAtts[0]['file_path'];
             }
         }
 
@@ -275,6 +268,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             exit;
         }
     }
+    elseif ($action === 'edit_expense') {
+        $expenseId = (int)($_POST['expense_id'] ?? 0);
+        try {
+            $result = editExpenseRecord($expenseId, $_POST, $currentUser);
+            setFlash('success', $result['message']);
+        } catch (Exception $e) {
+            setFlash('error', 'فشل تعديل المصروف: ' . $e->getMessage());
+        }
+        header('Location: project_view.php?id=' . $projectId . '&tab=tab-expenses');
+        exit;
+    }
     elseif ($action === 'add_daily_report') {
         $title = trim($_POST['title'] ?? '');
         $reportDate = !empty($_POST['report_date']) ? trim($_POST['report_date']) : date('Y-m-d');
@@ -295,7 +299,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             mkdir($uploadDir, 0777, true);
         }
 
-        // Handle Video File Upload if provided
+        // Handle Video File Upload if provided (legacy field)
         $savedVideoFile = null;
         if (isset($_FILES['video_file']) && $_FILES['video_file']['error'] === UPLOAD_ERR_OK) {
             $vTmp = $_FILES['video_file']['tmp_name'];
@@ -308,7 +312,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $savedVideoFile = 'uploads/projects/reports/' . $newVidName;
                 }
             } else {
-                setFlash('error', 'صيغة ملف الفيديو غير مدعومة. الصيغ المسموحة: MP4, WebM, MOV');
+                setFlash('error', 'صيغة ملف الفيديو غير مدعومة. الصيغ المسموحة: MP4, WebM, MOV, MKV, AVI');
                 header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
                 exit;
             }
@@ -342,7 +346,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ]);
             $reportId = (int)$db->lastInsertId();
 
-            // Insert video into media table if uploaded
+            $uploadedImgCount = 0;
+            $uploadedVidCount = 0;
+            $firstReportMediaVideo = $savedVideoFile;
+
+            // Insert legacy video into media table if uploaded
             if ($savedVideoFile) {
                 $insMedia = $db->prepare("
                     INSERT INTO project_report_media (
@@ -359,12 +367,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':cap' => 'فيديو: ' . $title,
                     ':now' => date('Y-m-d H:i:s')
                 ]);
+                $uploadedVidCount++;
             }
 
-            // Handle Multiple Image Uploads
-            $uploadedImgCount = 0;
+            // Allowed extensions for unified media upload
+            $allowedImgExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+            $allowedVidExts = ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi'];
+
+            // 1. Process Unified Drag & Drop Media (report_media[]) - auto-classifying images & videos
+            if (isset($_FILES['report_media']) && is_array($_FILES['report_media']['name'])) {
+                $countMedia = count($_FILES['report_media']['name']);
+                for ($i = 0; $i < $countMedia; $i++) {
+                    if ($_FILES['report_media']['error'][$i] === UPLOAD_ERR_OK) {
+                        $mTmp = $_FILES['report_media']['tmp_name'][$i];
+                        $mName = $_FILES['report_media']['name'][$i];
+                        $mExt = strtolower(pathinfo($mName, PATHINFO_EXTENSION));
+
+                        // Check if file is video
+                        if (in_array($mExt, $allowedVidExts)) {
+                            $newVidName = 'vid_rep_' . $reportId . '_' . time() . '_' . rand(1000, 9999) . '.' . $mExt;
+                            if (move_uploaded_file($mTmp, $uploadDir . $newVidName)) {
+                                $relPath = 'uploads/projects/reports/' . $newVidName;
+                                if (!$firstReportMediaVideo) {
+                                    $firstReportMediaVideo = $relPath;
+                                }
+                                $insMedia = $db->prepare("
+                                    INSERT INTO project_report_media (
+                                        report_id, project_id, company_id, file_path, file_type, caption, created_at
+                                    ) VALUES (
+                                        :rid, :pid, :cid, :fpath, 'video', :cap, :now
+                                    )
+                                ");
+                                $insMedia->execute([
+                                    ':rid' => $reportId,
+                                    ':pid' => $projectId,
+                                    ':cid' => $activeCompanyId,
+                                    ':fpath' => $relPath,
+                                    ':cap' => 'فيديو: ' . $title,
+                                    ':now' => date('Y-m-d H:i:s')
+                                ]);
+                                $uploadedVidCount++;
+                            }
+                        }
+                        // Check if file is image
+                        elseif (in_array($mExt, $allowedImgExts)) {
+                            $newImgName = 'img_rep_' . $reportId . '_' . time() . '_' . rand(1000, 9999) . '.' . $mExt;
+                            if (move_uploaded_file($mTmp, $uploadDir . $newImgName)) {
+                                $relPath = 'uploads/projects/reports/' . $newImgName;
+                                $insMedia = $db->prepare("
+                                    INSERT INTO project_report_media (
+                                        report_id, project_id, company_id, file_path, file_type, caption, created_at
+                                    ) VALUES (
+                                        :rid, :pid, :cid, :fpath, 'image', :cap, :now
+                                    )
+                                ");
+                                $insMedia->execute([
+                                    ':rid' => $reportId,
+                                    ':pid' => $projectId,
+                                    ':cid' => $activeCompanyId,
+                                    ':fpath' => $relPath,
+                                    ':cap' => $title,
+                                    ':now' => date('Y-m-d H:i:s')
+                                ]);
+                                $uploadedImgCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. Handle Multiple Image Uploads (legacy report_images[] fallback)
             if (isset($_FILES['report_images']) && is_array($_FILES['report_images']['name'])) {
-                $allowedImgExts = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
                 $countImgs = count($_FILES['report_images']['name']);
                 for ($i = 0; $i < $countImgs; $i++) {
                     if ($_FILES['report_images']['error'][$i] === UPLOAD_ERR_OK) {
@@ -397,7 +470,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
             }
 
-            setFlash('success', "تم حفظ التقرير الميداني بنجاح! تم إرفاق ({$uploadedImgCount}) صور " . ($savedVideoFile ? 'وفيديو الموقع.' : '.'));
+            // If a video was uploaded via unified dropzone and video_file was empty, record it in report row
+            if (!empty($firstReportMediaVideo) && empty($savedVideoFile)) {
+                $db->prepare("UPDATE project_daily_reports SET video_file = :vf WHERE id = :id")->execute([
+                    ':vf' => $firstReportMediaVideo,
+                    ':id' => $reportId
+                ]);
+            }
+
+            // Build informative flash message
+            $summaryParts = [];
+            if ($uploadedImgCount > 0) {
+                $summaryParts[] = "({$uploadedImgCount}) صور";
+            }
+            if ($uploadedVidCount > 0) {
+                $summaryParts[] = "({$uploadedVidCount}) فيديوهات";
+            }
+            $attachedText = !empty($summaryParts) ? ' تم إرفاق ' . implode(' و ', $summaryParts) . ' بنجاح.' : '.';
+
+            setFlash('success', "تم حفظ التقرير الميداني بنجاح!{$attachedText}");
             header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
             exit;
         } catch (Exception $e) {
@@ -438,7 +529,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
         exit;
     }
+    elseif ($action === 'upload_blueprint') {
+        $title = trim($_POST['title'] ?? '');
+        $type = trim($_POST['blueprint_type'] ?? 'عام');
+        $notes = trim($_POST['notes'] ?? '');
+
+        if (!isset($_FILES['blueprint_file']) || ($_FILES['blueprint_file']['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            setFlash('error', 'يرجى اختيار ملف المخطط الهندسي بشكل صحيح.');
+            header('Location: project_view.php?id=' . $projectId . '&tab=tab-blueprints');
+            exit;
+        }
+
+        try {
+            $bpId = saveProjectBlueprintFile(
+                $activeCompanyId,
+                $projectId,
+                (int)$currentUser['id'],
+                $_FILES['blueprint_file'],
+                $title,
+                $type,
+                $notes
+            );
+            if ($bpId) {
+                setFlash('success', 'تم رفع وإضافة المخطط الهندسي للمشروع بنجاح!');
+            } else {
+                setFlash('error', 'تعذر حفظ ملف المخطط.');
+            }
+        } catch (Exception $e) {
+            setFlash('error', 'خطأ أثناء رفع المخطط: ' . $e->getMessage());
+        }
+
+        header('Location: project_view.php?id=' . $projectId . '&tab=tab-blueprints');
+        exit;
+    }
+    elseif ($action === 'delete_blueprint') {
+        $bpId = (int)($_POST['blueprint_id'] ?? 0);
+        if ($bpId > 0 && deleteProjectBlueprint($activeCompanyId, $bpId)) {
+            setFlash('success', 'تم حذف المخطط الهندسي بنجاح.');
+        } else {
+            setFlash('error', 'تعذر حذف المخطط الهندسي.');
+        }
+        header('Location: project_view.php?id=' . $projectId . '&tab=tab-blueprints');
+        exit;
+    }
 }
+
+ensureProjectBlueprintsTable();
+$blueprints = getProjectBlueprints($activeCompanyId, $projectId);
+$totalBlueprintsCount = count($blueprints);
+$archStructCount = count(array_filter($blueprints, fn($b) => in_array($b['blueprint_type'] ?? '', ['معماري', 'إنشائي'])));
+$mepCount = count(array_filter($blueprints, fn($b) => in_array($b['blueprint_type'] ?? '', ['كهرباء (MEP)', 'صحي / سباكة', 'تكييف وميكانيكا'])));
+$totalBlueprintsSize = array_sum(array_column($blueprints, 'file_size'));
 
 // Filters: Month (e.g. Month 12: 2026-12), Custom Date Range, Category, Search, Exclude Land
 $filterMonth = trim($_GET['month'] ?? '');
@@ -462,12 +603,14 @@ $expQuery = "
     SELECT e.*, 
            ec.name as category_name, 
            u.name as user_name,
+           u_edit.name as editor_name,
            st.balance_before,
            st.balance_after,
            st.created_at as transaction_exact_time
     FROM expenses e
     LEFT JOIN expense_categories ec ON e.category_id = ec.id
     LEFT JOIN users u ON e.user_id = u.id
+    LEFT JOIN users u_edit ON e.last_edited_by = u_edit.id
     LEFT JOIN safe_transactions st ON e.safe_transaction_id = st.id
     WHERE e.company_id = :cid AND e.project_id = :pid
 ";
@@ -505,6 +648,10 @@ $expStmt = $db->prepare($expQuery);
 $expStmt->execute($expParams);
 $expensesList = $expStmt->fetchAll();
 
+// Batch fetch all attachments for these expenses (supports multiple invoices per expense)
+$allExpIds = array_column($expensesList, 'id');
+$expenseAttachmentsGrouped = getBatchExpenseAttachments($allExpIds);
+
 // Distinct categories used in this project for the filter dropdown
 $prjCatStmt = $db->prepare("
     SELECT DISTINCT ec.id, ec.name, COUNT(e.id) as exp_cnt
@@ -516,6 +663,11 @@ $prjCatStmt = $db->prepare("
 ");
 $prjCatStmt->execute([':cid' => $activeCompanyId, ':pid' => $projectId]);
 $projectCategories = $prjCatStmt->fetchAll();
+
+// All active categories for edit modal
+$allCatStmt = $db->prepare("SELECT id, name FROM expense_categories WHERE company_id = :cid AND is_active = 1 ORDER BY name ASC");
+$allCatStmt->execute([':cid' => $activeCompanyId]);
+$allCategoriesList = $allCatStmt->fetchAll(PDO::FETCH_ASSOC);
 
 // Period Totals (Exclude pending approval and rejected expenses from project cost)
 $periodTotalSpent = 0;
@@ -1077,6 +1229,10 @@ require_once __DIR__ . '/includes/header.php';
             <i class="fa-solid fa-receipt ml-1.5"></i>
             فواتير ومصروفات المشروع (<?= count($expensesList) ?>)
         </button>
+        <button onclick="switchTab('tab-blueprints')" id="btn-tab-blueprints" class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center transition">
+            <i class="fa-solid fa-compass-drafting ml-1.5 text-cyan-600"></i>
+            المخططات الهندسية وملفات المشروع (<?= count($blueprints) ?>)
+        </button>
         <button onclick="switchTab('tab-reports')" id="btn-tab-reports" class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center transition">
             <i class="fa-solid fa-camera-retro ml-1.5 text-blue-600"></i>
             تقارير الموقع والإنجاز (<?= count($dailyReports) ?>)
@@ -1175,10 +1331,22 @@ require_once __DIR__ . '/includes/header.php';
                                 ?>
                                 <tr class="hover:bg-slate-50/70 transition <?= $isPending ? 'bg-amber-50/30' : '' ?>">
                                     <td class="p-3.5 whitespace-nowrap font-mono font-bold text-slate-800">
-                                        <?= htmlspecialchars($row['voucher_number'] ?: ('VCH-' . $row['id'])) ?>
+                                        <div class="flex items-center gap-1.5">
+                                            <span><?= htmlspecialchars($row['voucher_number'] ?: ('VCH-' . $row['id'])) ?></span>
+                                            <?php if (!empty($row['is_edited'])): ?>
+                                                <button type="button" onclick="openExpenseHistoryModal(<?= (int)$row['id'] ?>)" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition shadow-2xs cursor-pointer" title="فاتورة معدلة - انقر لعرض سجل التعديل والرقابة (Equals)">
+                                                    <i class="fa-solid fa-pen-to-square text-amber-600 text-[9px]"></i> مُعدّلة
+                                                </button>
+                                            <?php endif; ?>
+                                        </div>
                                         <?php if (!empty($row['user_name'])): ?>
                                             <span class="text-[10px] text-slate-400 font-sans font-normal block mt-0.5" title="المستخدم الذي سجّل المصروف">
                                                 <i class="fa-solid fa-user-pen ml-1 text-slate-400"></i><?= htmlspecialchars($row['user_name']) ?>
+                                            </span>
+                                        <?php endif; ?>
+                                        <?php if (!empty($row['is_edited']) && !empty($row['editor_name'])): ?>
+                                            <span class="text-[9px] text-amber-700 font-sans font-bold block mt-0.5" title="آخر تعديل">
+                                                <i class="fa-solid fa-user-gear ml-0.5 text-amber-500"></i> عُدّلت بواسطة: <?= htmlspecialchars($row['editor_name']) ?>
                                             </span>
                                         <?php endif; ?>
                                     </td>
@@ -1197,6 +1365,19 @@ require_once __DIR__ . '/includes/header.php';
                                         <?php if (!empty($row['category_name'])): ?>
                                             <span class="inline-block mt-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-slate-100 text-slate-600">
                                                 <i class="fa-solid fa-tag ml-1 text-amber-500"></i><?= htmlspecialchars($row['category_name']) ?>
+                                            </span>
+                                        <?php endif; ?>
+                                        <?php if (!empty($row['payment_method'])): ?>
+                                            <?php
+                                            $pm = trim($row['payment_method']);
+                                            $pmBadge = match($pm) {
+                                                'تحويل بنكي' => ['bg' => 'bg-blue-50 text-blue-700 border-blue-200', 'icon' => 'fa-building-columns'],
+                                                'كاش' => ['bg' => 'bg-amber-50 text-amber-800 border-amber-200', 'icon' => 'fa-wallet'],
+                                                default => ['bg' => 'bg-emerald-50 text-emerald-800 border-emerald-200', 'icon' => 'fa-coins']
+                                            };
+                                            ?>
+                                            <span class="inline-flex items-center mt-1 mr-1 px-2 py-0.5 rounded-md text-[10px] font-bold border <?= $pmBadge['bg'] ?>" title="طريقة الخصم">
+                                                <i class="fa-solid <?= $pmBadge['icon'] ?> ml-1 text-[9px]"></i><?= htmlspecialchars($pm) ?>
                                             </span>
                                         <?php endif; ?>
                                     </td>
@@ -1247,22 +1428,47 @@ require_once __DIR__ . '/includes/header.php';
                                             <span class="text-slate-400 text-[11px]">مخصوم</span>
                                         <?php endif; ?>
                                     </td>
-                                    <!-- Attachment -->
+                                    <!-- Attachment (Single or Multiple Invoices) -->
                                     <td class="p-3.5 whitespace-nowrap text-center">
-                                        <?php if (!empty($row['invoice_attachment']) && file_exists(APP_PATH . '/' . $row['invoice_attachment'])): ?>
-                                            <?php $ext = strtolower(pathinfo($row['invoice_attachment'], PATHINFO_EXTENSION)); ?>
-                                            <?php if (in_array($ext, ['jpg', 'jpeg', 'png', 'webp'])): ?>
-                                                <a href="<?= htmlspecialchars($row['invoice_attachment']) ?>" target="_blank" class="inline-block group" title="معاينة صورة الفاتورة">
-                                                    <img src="<?= htmlspecialchars($row['invoice_attachment']) ?>" alt="فاتورة" class="w-10 h-10 object-cover rounded-lg border border-slate-300 group-hover:scale-105 transition shadow-xs mx-auto">
-                                                </a>
+                                        <?php 
+                                        $rowAtts = $expenseAttachmentsGrouped[$row['id']] ?? [];
+                                        if (empty($rowAtts) && !empty($row['invoice_attachment'])) {
+                                            $cleanPath = ltrim($row['invoice_attachment'], '/');
+                                            $rowAtts = [
+                                                [
+                                                    'id' => 0,
+                                                    'file_path' => $cleanPath,
+                                                    'file_name' => basename($cleanPath),
+                                                    'file_ext' => strtolower(pathinfo($cleanPath, PATHINFO_EXTENSION))
+                                                ]
+                                            ];
+                                        }
+                                        $attCount = count($rowAtts);
+                                        ?>
+                                        <?php if ($attCount === 0): ?>
+                                            <span class="text-slate-300 text-[11px]">بدون مرفق</span>
+                                        <?php elseif ($attCount === 1): ?>
+                                            <?php $singleAtt = $rowAtts[0]; ?>
+                                            <?php if (in_array($singleAtt['file_ext'], ['jpg', 'jpeg', 'png', 'webp'])): ?>
+                                                <button type="button" onclick='openExpenseInvoicesModal(<?= json_encode($rowAtts, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, "<?= htmlspecialchars(addslashes($row['title'])) ?>", "<?= htmlspecialchars($row['voucher_number'] ?: ('#' . $row['id'])) ?>")' class="inline-block group" title="معاينة الفاتورة">
+                                                    <img src="<?= htmlspecialchars($singleAtt['file_path']) ?>" alt="فاتورة" class="w-10 h-10 object-cover rounded-lg border border-slate-300 group-hover:scale-105 transition shadow-xs mx-auto">
+                                                </button>
                                             <?php else: ?>
-                                                <a href="<?= htmlspecialchars($row['invoice_attachment']) ?>" target="_blank" class="inline-flex items-center px-2 py-1 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition shadow-2xs" title="عرض فاتورة الشراء المرفقة">
+                                                <a href="<?= htmlspecialchars($singleAtt['file_path']) ?>" target="_blank" class="inline-flex items-center px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 transition shadow-2xs" title="عرض فاتورة الشراء المرفقة">
                                                     <i class="fa-solid fa-file-pdf text-red-600 ml-1"></i>
                                                     PDF
                                                 </a>
                                             <?php endif; ?>
                                         <?php else: ?>
-                                            <span class="text-slate-300 text-[11px]">بدون مرفق</span>
+                                            <!-- Multiple Invoices Badge Button -->
+                                            <button type="button" 
+                                                    onclick='openExpenseInvoicesModal(<?= json_encode($rowAtts, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP) ?>, "<?= htmlspecialchars(addslashes($row['title'])) ?>", "<?= htmlspecialchars($row['voucher_number'] ?: ('#' . $row['id'])) ?>")'
+                                                    class="inline-flex items-center space-x-1.5 space-x-reverse px-2.5 py-1 rounded-xl text-xs font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-800 border border-indigo-200 shadow-2xs transition group"
+                                                    title="عرض كافة الفواتير المرفقة (<?= $attCount ?> فواتير)">
+                                                <i class="fa-solid fa-layer-group text-indigo-600 text-xs"></i>
+                                                <span><?= $attCount ?> فواتير</span>
+                                                <i class="fa-solid fa-arrow-up-right-from-square text-[9px] text-indigo-400 group-hover:text-indigo-700"></i>
+                                            </button>
                                         <?php endif; ?>
                                     </td>
                                     <!-- Status Badge & Action -->
@@ -1304,10 +1510,25 @@ require_once __DIR__ . '/includes/header.php';
                                         <?php endif; ?>
                                     </td>
                                     <td class="p-3.5 whitespace-nowrap text-center">
-                                        <a href="project_voucher_print.php?id=<?= $row['id'] ?>" target="_blank" class="inline-flex items-center bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-2.5 py-1.5 rounded-lg text-xs transition" title="طباعة سند الصرف A4">
-                                            <i class="fa-solid fa-print ml-1 text-slate-600"></i>
-                                            سند A4
-                                        </a>
+                                        <div class="flex items-center justify-center gap-1.5">
+                                            <button type="button" 
+                                                    onclick='openEditExpenseModal(<?= json_encode($row, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>, <?= json_encode($rowAtts, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP | JSON_UNESCAPED_UNICODE) ?>)' 
+                                                    class="inline-flex items-center bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold px-2.5 py-1.5 rounded-lg text-xs transition" 
+                                                    title="تعديل هذا المصروف">
+                                                <i class="fa-solid fa-pen-to-square ml-1 text-blue-600"></i> تعديل
+                                            </button>
+                                            <?php if (!empty($row['is_edited'])): ?>
+                                                <button type="button" 
+                                                        onclick="openExpenseHistoryModal(<?= (int)$row['id'] ?>)" 
+                                                        class="inline-flex items-center bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 font-bold px-2 py-1.5 rounded-lg text-xs transition" 
+                                                        title="عرض سجل الرقابة والتعديلات (Equals)">
+                                                    <i class="fa-solid fa-clock-rotate-left ml-1 text-amber-600"></i> السجل
+                                                </button>
+                                            <?php endif; ?>
+                                            <a href="project_voucher_print.php?id=<?= $row['id'] ?>" target="_blank" class="inline-flex items-center bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold px-2.5 py-1.5 rounded-lg text-xs transition" title="طباعة سند الصرف A4">
+                                                <i class="fa-solid fa-print ml-1 text-slate-600"></i> سند A4
+                                            </a>
+                                        </div>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -1620,6 +1841,287 @@ require_once __DIR__ . '/includes/header.php';
         </div>
     </div>
 
+    <!-- TAB: BLUEPRINTS & ENGINEERING PROJECT FILES -->
+    <div id="tab-blueprints" class="tab-pane hidden space-y-6">
+        <!-- Top bar inside blueprints tab -->
+        <div class="bg-white rounded-3xl p-5 sm:p-6 border border-slate-200/90 shadow-xs flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+                <div class="flex items-center space-x-2 space-x-reverse text-cyan-700 font-bold text-xs uppercase mb-1">
+                    <i class="fa-solid fa-compass-drafting text-cyan-600"></i>
+                    <span>الأرشيف والمستندات الفنية</span>
+                </div>
+                <h3 class="text-lg font-black text-slate-900">المخططات الهندسية وملفات المشروع</h3>
+                <p class="text-xs text-slate-500 mt-0.5">المخططات التنفيذية، المعمارية، الإنشائية، الكهروميكانيك، وتراخيص البناء الخاصة بمشروع: <strong class="text-slate-700"><?= htmlspecialchars($project['name']) ?></strong></p>
+            </div>
+            <div class="flex items-center space-x-2 space-x-reverse shrink-0">
+                <?php if (!isViewOnly()): ?>
+                    <button type="button" onclick="openModal('upload-blueprint-modal')" class="bg-gradient-to-r from-cyan-600 to-sky-600 hover:from-cyan-700 hover:to-sky-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md shadow-cyan-600/20 text-xs flex items-center transition">
+                        <i class="fa-solid fa-cloud-arrow-up ml-1.5"></i>
+                        <span>رفع مخطط هندسي جديد</span>
+                    </button>
+                <?php endif; ?>
+            </div>
+        </div>
+
+        <!-- Blueprints Quick Stats Row -->
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-slate-500">إجمالي المخططات</span>
+                    <div class="w-8 h-8 rounded-xl bg-cyan-50 text-cyan-600 flex items-center justify-center text-sm font-bold">
+                        <i class="fa-solid fa-folder-open"></i>
+                    </div>
+                </div>
+                <div class="text-xl font-black text-slate-900"><?= number_format($totalBlueprintsCount) ?></div>
+                <span class="text-[11px] text-slate-400">ملف ومخطط محفوظ</span>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-slate-500">معماري وإنشائي</span>
+                    <div class="w-8 h-8 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center text-sm font-bold">
+                        <i class="fa-solid fa-trowel-bricks"></i>
+                    </div>
+                </div>
+                <div class="text-xl font-black text-slate-900"><?= number_format($archStructCount) ?></div>
+                <span class="text-[11px] text-slate-400">مخطط بناء رئيسي</span>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-slate-500">خدمات وMEP</span>
+                    <div class="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center text-sm font-bold">
+                        <i class="fa-solid fa-bolt"></i>
+                    </div>
+                </div>
+                <div class="text-xl font-black text-slate-900"><?= number_format($mepCount) ?></div>
+                <span class="text-[11px] text-slate-400">كهرباء وسباكة وتكييف</span>
+            </div>
+
+            <div class="bg-white rounded-2xl p-4 border border-slate-200/90 shadow-2xs">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-xs font-bold text-slate-500">حجم الملفات</span>
+                    <div class="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-sm font-bold">
+                        <i class="fa-solid fa-hard-drive"></i>
+                    </div>
+                </div>
+                <div class="text-xl font-black text-slate-900 font-mono"><?= formatBytes($totalBlueprintsSize) ?></div>
+                <span class="text-[11px] text-slate-400">سعة تخزينية مستخدمة</span>
+            </div>
+        </div>
+
+        <!-- Filter Tags Bar -->
+        <?php if ($totalBlueprintsCount > 0): ?>
+            <div class="flex items-center space-x-2 space-x-reverse overflow-x-auto pb-1 text-xs">
+                <span class="text-slate-400 font-bold shrink-0 ml-1">تصفية حسب:</span>
+                <button type="button" onclick="filterBlueprints('all', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-cyan-600 text-white shadow-2xs transition">
+                    الكل (<?= $totalBlueprintsCount ?>)
+                </button>
+                <button type="button" onclick="filterBlueprints('معماري', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    معماري
+                </button>
+                <button type="button" onclick="filterBlueprints('إنشائي', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    إنشائي
+                </button>
+                <button type="button" onclick="filterBlueprints('كهرباء (MEP)', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    كهرباء (MEP)
+                </button>
+                <button type="button" onclick="filterBlueprints('صحي / سباكة', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    صحي / سباكة
+                </button>
+                <button type="button" onclick="filterBlueprints('تكييف وميكانيكا', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    تكييف وميكانيكا
+                </button>
+                <button type="button" onclick="filterBlueprints('كروكي ورخصة', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    كروكي ورخصة
+                </button>
+                <button type="button" onclick="filterBlueprints('مخطط شامل', this)" class="bp-filter-btn px-3 py-1.5 rounded-xl font-bold bg-white text-slate-600 border border-slate-200 hover:bg-slate-50 transition">
+                    شامل / عام
+                </button>
+            </div>
+        <?php endif; ?>
+
+        <!-- Blueprints List / Grid -->
+        <?php if ($totalBlueprintsCount === 0): ?>
+            <!-- Empty State -->
+            <div class="bg-white rounded-3xl p-10 sm:p-14 border border-slate-200 text-center space-y-4">
+                <div class="w-20 h-20 rounded-3xl bg-cyan-50 text-cyan-600 flex items-center justify-center text-3xl mx-auto shadow-inner">
+                    <i class="fa-solid fa-compass-drafting"></i>
+                </div>
+                <div class="max-w-md mx-auto">
+                    <h4 class="text-base sm:text-lg font-black text-slate-800 mb-1">لم يتم إرفاق أي مخططات هندسية لهذا المشروع بعد</h4>
+                    <p class="text-xs text-slate-500 leading-relaxed">
+                        يمكنك أرشفة ورفع المخططات المعمارية، الإنشائية، الكروكيات، وملفات الأوتوكاد والـ PDF لتكون مرجعاً موحداً ودائماً لفريق العمل بالموقع والعميل.
+                    </p>
+                </div>
+                <?php if (!isViewOnly()): ?>
+                    <button type="button" onclick="openModal('upload-blueprint-modal')" class="inline-flex items-center bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-6 rounded-2xl shadow-md shadow-cyan-600/20 text-xs transition">
+                        <i class="fa-solid fa-cloud-arrow-up ml-2"></i>
+                        <span>رفع أول مخطط هندسي للمشروع</span>
+                    </button>
+                <?php endif; ?>
+            </div>
+        <?php else: ?>
+            <div id="blueprints-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <?php foreach ($blueprints as $bp): ?>
+                    <?php 
+                    $ext = strtolower($bp['file_ext'] ?? pathinfo($bp['file_name'], PATHINFO_EXTENSION));
+                    $isImage = in_array($ext, ['png', 'jpg', 'jpeg', 'webp', 'svg']);
+                    $isPdf = $ext === 'pdf';
+                    $isCad = in_array($ext, ['dwg', 'dxf', 'cad', 'rvt', 'ifc']);
+                    $isZip = in_array($ext, ['zip', 'rar', '7z', 'tar', 'gz']);
+
+                    // Type color badges
+                    $typeBadgeColors = [
+                        'معماري' => 'bg-cyan-50 text-cyan-700 border-cyan-200',
+                        'إنشائي' => 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                        'كهرباء (MEP)' => 'bg-amber-50 text-amber-700 border-amber-200',
+                        'صحي / سباكة' => 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                        'تكييف وميكانيكا' => 'bg-sky-50 text-sky-700 border-sky-200',
+                        'كروكي ورخصة' => 'bg-purple-50 text-purple-700 border-purple-200',
+                        'ديكور وتشطيبات' => 'bg-rose-50 text-rose-700 border-rose-200',
+                    ];
+                    $tClass = $typeBadgeColors[$bp['blueprint_type']] ?? 'bg-slate-100 text-slate-700 border-slate-200';
+                    ?>
+                    <div class="bp-card bg-white rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-md transition-all overflow-hidden flex flex-col justify-between" data-btype="<?= htmlspecialchars($bp['blueprint_type']) ?>">
+                        <!-- Card Media / Preview Area -->
+                        <div class="relative bg-slate-900/5 border-b border-slate-100 h-44 flex items-center justify-center overflow-hidden group">
+                            <?php if ($isImage): ?>
+                                <img src="<?= htmlspecialchars($bp['file_path']) ?>" alt="<?= htmlspecialchars($bp['title']) ?>" class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105">
+                                <a href="<?= htmlspecialchars($bp['file_path']) ?>" target="_blank" class="absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-bold text-xs transition gap-1.5 backdrop-blur-2xs">
+                                    <i class="fa-solid fa-up-right-from-square"></i>
+                                    <span>معاينة الصورة بالحجم الكامل</span>
+                                </a>
+                            <?php elseif ($isPdf): ?>
+                                <div class="w-full h-full bg-gradient-to-br from-rose-50 to-slate-100 flex flex-col items-center justify-center text-rose-500 relative p-4">
+                                    <div class="w-14 h-14 rounded-2xl bg-white shadow-xs border border-rose-200 flex items-center justify-center text-2xl text-rose-600 mb-2 group-hover:scale-110 transition">
+                                        <i class="fa-solid fa-file-pdf"></i>
+                                    </div>
+                                    <span class="text-xs font-black text-slate-800 truncate max-w-full px-2"><?= htmlspecialchars($bp['file_name']) ?></span>
+                                    <span class="text-[10px] text-slate-400 font-mono mt-0.5">مستند PDF هندسي</span>
+                                    <a href="<?= htmlspecialchars($bp['file_path']) ?>" target="_blank" class="absolute inset-0 bg-rose-950/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-bold text-xs transition gap-1.5 backdrop-blur-2xs">
+                                        <i class="fa-solid fa-book-open"></i>
+                                        <span>فتح وقراءة مستند الـ PDF</span>
+                                    </a>
+                                </div>
+                            <?php elseif ($isCad): ?>
+                                <div class="w-full h-full bg-gradient-to-br from-cyan-950 via-slate-900 to-sky-950 flex flex-col items-center justify-center text-cyan-400 relative p-4">
+                                    <div class="absolute inset-0 opacity-15 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px]"></div>
+                                    <div class="w-14 h-14 rounded-2xl bg-cyan-900/60 border border-cyan-500/30 shadow-xs flex items-center justify-center text-2xl text-cyan-300 mb-2 group-hover:scale-110 transition z-10">
+                                        <i class="fa-solid fa-drafting-compass"></i>
+                                    </div>
+                                    <span class="text-xs font-black text-cyan-100 truncate max-w-full px-2 z-10"><?= htmlspecialchars($bp['file_name']) ?></span>
+                                    <span class="text-[10px] text-cyan-300/70 font-mono mt-0.5 z-10">ملف أوتوكاد CAD / DWG</span>
+                                    <a href="<?= htmlspecialchars($bp['file_path']) ?>" download="<?= htmlspecialchars($bp['file_name']) ?>" class="absolute inset-0 bg-cyan-950/60 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white font-bold text-xs transition gap-1.5 backdrop-blur-2xs z-20">
+                                        <i class="fa-solid fa-download"></i>
+                                        <span>تحميل ملف المخطط CAD</span>
+                                    </a>
+                                </div>
+                            <?php elseif ($isZip): ?>
+                                <div class="w-full h-full bg-gradient-to-br from-amber-50 to-slate-100 flex flex-col items-center justify-center text-amber-600 relative p-4">
+                                    <div class="w-14 h-14 rounded-2xl bg-white shadow-xs border border-amber-200 flex items-center justify-center text-2xl text-amber-600 mb-2 group-hover:scale-110 transition">
+                                        <i class="fa-solid fa-file-zipper"></i>
+                                    </div>
+                                    <span class="text-xs font-black text-slate-800 truncate max-w-full px-2"><?= htmlspecialchars($bp['file_name']) ?></span>
+                                    <span class="text-[10px] text-slate-400 font-mono mt-0.5">أرشيف ملفات مضغوط</span>
+                                </div>
+                            <?php else: ?>
+                                <div class="w-full h-full bg-slate-50 flex flex-col items-center justify-center text-slate-500 relative p-4">
+                                    <div class="w-14 h-14 rounded-2xl bg-white shadow-xs border border-slate-200 flex items-center justify-center text-2xl text-slate-600 mb-2">
+                                        <i class="fa-solid fa-file-lines"></i>
+                                    </div>
+                                    <span class="text-xs font-black text-slate-800 truncate max-w-full px-2"><?= htmlspecialchars($bp['file_name']) ?></span>
+                                </div>
+                            <?php endif; ?>
+
+                            <!-- Badges on Preview Top -->
+                            <div class="absolute top-2.5 right-2.5 flex items-center space-x-1.5 space-x-reverse z-10">
+                                <span class="text-[10px] font-black px-2.5 py-0.5 rounded-full border shadow-2xs backdrop-blur-md <?= $tClass ?>">
+                                    <?= htmlspecialchars($bp['blueprint_type']) ?>
+                                </span>
+                            </div>
+                            <div class="absolute top-2.5 left-2.5 z-10">
+                                <span class="text-[10px] font-mono font-black px-2 py-0.5 rounded-md uppercase bg-slate-900/80 text-white shadow-2xs backdrop-blur-md">
+                                    <?= htmlspecialchars($ext) ?>
+                                </span>
+                            </div>
+                        </div>
+
+                        <!-- Card Body -->
+                        <div class="p-4 space-y-2.5 flex-1 flex flex-col justify-between">
+                            <div>
+                                <h4 class="font-black text-slate-900 text-sm leading-snug line-clamp-1" title="<?= htmlspecialchars($bp['title']) ?>">
+                                    <?= htmlspecialchars($bp['title']) ?>
+                                </h4>
+                                <div class="flex items-center space-x-2 space-x-reverse text-[11px] text-slate-400 mt-1">
+                                    <span class="font-mono text-slate-500 font-semibold"><?= formatBytes($bp['file_size']) ?></span>
+                                    <span>•</span>
+                                    <span><?= date('Y-m-d', strtotime($bp['created_at'])) ?></span>
+                                    <?php if (!empty($bp['uploader_name'])): ?>
+                                        <span>•</span>
+                                        <span class="truncate max-w-[100px]"><?= htmlspecialchars($bp['uploader_name']) ?></span>
+                                    <?php endif; ?>
+                                </div>
+
+                                <?php if (!empty($bp['notes'])): ?>
+                                    <p class="text-xs text-slate-600 bg-slate-50 border border-slate-100 rounded-xl p-2.5 mt-2 leading-relaxed">
+                                        <?= nl2br(htmlspecialchars($bp['notes'])) ?>
+                                    </p>
+                                <?php endif; ?>
+                            </div>
+
+                            <!-- Card Footer Actions -->
+                            <div class="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                                <div class="flex items-center space-x-1.5 space-x-reverse">
+                                    <a href="<?= htmlspecialchars($bp['file_path']) ?>" target="_blank" class="px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs flex items-center transition" title="معاينة وفتح المخطط في نافذة جديدة">
+                                        <i class="fa-solid fa-arrow-up-right-from-square ml-1 text-cyan-600"></i>
+                                        <span>معاينة</span>
+                                    </a>
+                                    <a href="<?= htmlspecialchars($bp['file_path']) ?>" download="<?= htmlspecialchars($bp['file_name']) ?>" class="px-2.5 py-1.5 rounded-xl bg-cyan-50 hover:bg-cyan-100 text-cyan-800 font-bold text-xs flex items-center transition" title="تحميل الملف على جهازك">
+                                        <i class="fa-solid fa-download ml-1 text-cyan-700"></i>
+                                        <span>تحميل</span>
+                                    </a>
+                                </div>
+
+                                <?php if (!isViewOnly()): ?>
+                                    <form action="project_view.php?id=<?= $projectId ?>" method="POST" onsubmit="return confirm('هل أنت متأكد من حذف هذا المخطط الهندسي نهائياً؟');" class="inline">
+                                        <?= getCSRFInput() ?>
+                                        <input type="hidden" name="action" value="delete_blueprint">
+                                        <input type="hidden" name="blueprint_id" value="<?= $bp['id'] ?>">
+                                        <button type="submit" class="w-8 h-8 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 flex items-center justify-center transition text-xs" title="حذف المخطط">
+                                            <i class="fa-solid fa-trash-can"></i>
+                                        </button>
+                                    </form>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+
+            <script>
+                function filterBlueprints(type, btn) {
+                    document.querySelectorAll('.bp-filter-btn').forEach(b => {
+                        b.classList.remove('bg-cyan-600', 'text-white');
+                        b.classList.add('bg-white', 'text-slate-600', 'border', 'border-slate-200');
+                    });
+                    if (btn) {
+                        btn.classList.remove('bg-white', 'text-slate-600', 'border', 'border-slate-200');
+                        btn.classList.add('bg-cyan-600', 'text-white');
+                    }
+                    const cards = document.querySelectorAll('.bp-card');
+                    cards.forEach(card => {
+                        if (type === 'all' || card.getAttribute('data-btype') === type) {
+                            card.classList.remove('hidden');
+                        } else {
+                            card.classList.add('hidden');
+                        }
+                    });
+                }
+            </script>
+        <?php endif; ?>
+    </div>
+
     <!-- TAB: DAILY SITE REPORTS & PROGRESS -->
     <div id="tab-reports" class="tab-pane hidden space-y-6">
         <!-- Top bar inside tab -->
@@ -1767,15 +2269,30 @@ require_once __DIR__ . '/includes/header.php';
 
                             <!-- Video Section -->
                             <?php 
-                            $videoHtml = renderProjectVideoPlayer($rep['video_file'], $rep['video_url']);
-                            if (!empty($videoHtml)): 
+                            $hasVideos = !empty($repVideos) || !empty($rep['video_file']) || !empty($rep['video_url']);
+                            if ($hasVideos): 
+                                $vCount = count($repVideos);
                             ?>
                                 <div>
-                                    <div class="flex items-center space-x-2 space-x-reverse text-xs font-bold text-slate-700 mb-1">
+                                    <div class="flex items-center space-x-2 space-x-reverse text-xs font-bold text-slate-700 mb-2">
                                         <i class="fa-solid fa-video text-rose-600"></i>
-                                        <span>فيديو توثيق إنجاز المرحلة</span>
+                                        <span>فيديوهات توثيق إنجاز المرحلة <?= $vCount > 1 ? "({$vCount} فيديوهات)" : '' ?></span>
                                     </div>
-                                    <?= $videoHtml ?>
+                                    <div class="space-y-3">
+                                        <?php 
+                                        if (!empty($repVideos)):
+                                            foreach ($repVideos as $vItem):
+                                                echo renderProjectVideoPlayer($vItem['file_path'], null);
+                                            endforeach;
+                                        elseif (!empty($rep['video_file'])):
+                                            echo renderProjectVideoPlayer($rep['video_file'], null);
+                                        endif;
+
+                                        if (!empty($rep['video_url'])):
+                                            echo renderProjectVideoPlayer(null, $rep['video_url']);
+                                        endif;
+                                        ?>
+                                    </div>
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -2142,13 +2659,37 @@ require_once __DIR__ . '/includes/header.php';
                 </div>
             </div>
 
-            <!-- Invoice Attachment File -->
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">
-                    <i class="fa-solid fa-paperclip ml-1 text-slate-400"></i>
-                    إرفاق فاتورة الشراء أو السند (صورة أو PDF)
-                </label>
-                <input type="file" name="invoice_file" accept=".jpg,.jpeg,.png,.webp,.pdf" class="w-full text-xs text-slate-600 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 file:mr-2 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100">
+            <!-- Invoice Attachment Files (Supports Multiple Invoices & Receipts) -->
+            <div class="space-y-2">
+                <div class="flex items-center justify-between">
+                    <label class="block text-xs font-bold text-slate-700 flex items-center">
+                        <i class="fa-solid fa-receipt ml-1 text-rose-600"></i>
+                        فواتير وإيصالات الشراء (يمكنك رفع أكثر من فاتورة)
+                    </label>
+                    <span id="quick_exp_files_badge" class="hidden text-[10px] font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full">
+                        0 فواتير
+                    </span>
+                </div>
+                
+                <div id="quick_exp_dropzone" 
+                     class="border-2 border-dashed border-slate-300 hover:border-rose-400 rounded-2xl p-4 text-center cursor-pointer bg-slate-50/70 hover:bg-rose-50/30 transition group"
+                     onclick="document.getElementById('quick_exp_files_input').click()"
+                     ondragover="handleQuickExpDragOver(event)"
+                     ondragleave="handleQuickExpDragLeave(event)"
+                     ondrop="handleQuickExpDrop(event)">
+                    
+                    <input type="file" id="quick_exp_files_input" name="invoice_files[]" multiple accept="image/*,application/pdf,.pdf" class="hidden" onchange="handleQuickExpFilesSelected(this.files)">
+                    
+                    <div id="quick_exp_placeholder" class="pointer-events-none py-1">
+                        <i class="fa-solid fa-cloud-arrow-up text-xl text-rose-500 mb-1 block"></i>
+                        <span class="text-xs font-bold text-slate-700 block">اضغط لاختيار أو اسحب الفواتير هنا</span>
+                        <span class="text-[10px] text-slate-400 block mt-0.5">يمكنك تحديد عدة صور أو ملفات PDF معاً (JPG, PNG, WEBP, PDF)</span>
+                    </div>
+
+                    <div id="quick_exp_preview_grid" class="hidden grid-cols-2 sm:grid-cols-4 gap-2 pt-2 text-right">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -2338,38 +2879,103 @@ require_once __DIR__ . '/includes/header.php';
                 <textarea name="description" rows="3" placeholder="اكتب وصفاً لما تم إنجازه في الموقع خلال هذه الفترة (مثال: تم الانتهاء من تمديد مواسير الصرف والتغذية للدور الأول واختبار الضغط...)" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs leading-relaxed focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
             </div>
 
-            <!-- 5: Multiple Photos Upload -->
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">
-                    <i class="fa-solid fa-images ml-1 text-blue-600"></i>
-                    صور الموقع الميدانية (يمكن اختيار عدة صور معاً)
-                </label>
-                <div class="border-2 border-dashed border-slate-300 rounded-2xl p-4 text-center bg-slate-50/70 hover:bg-blue-50/30 transition">
-                    <input type="file" name="report_images[]" id="rep_photos_input" multiple accept="image/jpeg,image/png,image/webp" onchange="previewReportPhotos(this)" class="hidden">
-                    <label for="rep_photos_input" class="cursor-pointer flex flex-col items-center">
-                        <i class="fa-solid fa-cloud-arrow-up text-2xl text-blue-500 mb-1"></i>
-                        <span class="text-xs font-bold text-slate-700">اضغط هنا لاختيار صور الإنجاز من جهازك أو الجوال</span>
-                        <span class="text-[10px] text-slate-400 mt-0.5">صيغ مدعومة: JPG, PNG, WEBP (يمكن تحديد أكثر من صورة معاً)</span>
+            <!-- Unified Drag & Drop Media Upload (Photos + Videos Auto-Analyzed) -->
+            <div class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <label class="block text-xs font-black text-slate-800">
+                        <i class="fa-solid fa-photo-film ml-1 text-indigo-600"></i>
+                        وسائط التقرير الميداني (صور وفيديوهات الموقع)
                     </label>
-                    <div id="photos_preview_grid" class="grid grid-cols-4 sm:grid-cols-6 gap-2 mt-3 hidden"></div>
+                    <span id="rep_media_badge_summary" class="hidden text-[11px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-full">
+                        0 وسائط محددة
+                    </span>
                 </div>
-            </div>
 
-            <!-- 6: Video Upload & Video URL -->
-            <div class="border border-slate-200 rounded-2xl p-3 bg-slate-50/50 space-y-3">
-                <span class="text-xs font-bold text-slate-700 flex items-center">
-                    <i class="fa-solid fa-video ml-1.5 text-rose-600"></i>
-                    فيديو توثيقي من الموقع (اختياري)
-                </span>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-600 mb-1">رفع ملف فيديو مباشر</label>
-                        <input type="file" name="video_file" accept="video/mp4,video/webm,video/quicktime,video/mkv" class="w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-rose-50 file:text-rose-700 hover:file:bg-rose-100">
+                <!-- Unified Dropzone Column -->
+                <div id="report_dropzone" 
+                     class="relative border-2 border-dashed border-indigo-300 hover:border-indigo-500 rounded-2xl p-5 text-center bg-gradient-to-b from-indigo-50/40 via-white to-slate-50/40 transition-all duration-200 cursor-pointer group"
+                     onclick="document.getElementById('rep_media_input').click()"
+                     ondragover="handleReportDragOver(event)"
+                     ondragleave="handleReportDragLeave(event)"
+                     ondrop="handleReportDrop(event)">
+                    
+                    <input type="file" id="rep_media_input" name="report_media[]" multiple 
+                           accept="image/*,video/*,.mp4,.mov,.webm,.mkv,.avi,.jpg,.jpeg,.png,.webp" 
+                           onchange="handleReportFilesSelected(this.files)" class="hidden">
+
+                    <div class="flex flex-col items-center justify-center space-y-2 pointer-events-none">
+                        <div class="w-12 h-12 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-xl group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition duration-200 shadow-xs">
+                            <i class="fa-solid fa-cloud-arrow-up"></i>
+                        </div>
+                        <div>
+                            <span class="text-xs sm:text-sm font-black text-slate-800 block">
+                                اسحب وأفلت الصور والفيديوهات معاً هنا (Drag & Drop)
+                            </span>
+                            <span class="text-[11px] text-slate-500 mt-0.5 block">
+                                أو اضغط هنا لاختيار الملفات (صور وفيديوهات معاً دفعة واحدة)
+                            </span>
+                        </div>
+                        <div class="flex flex-wrap items-center justify-center gap-2 pt-1 text-[10px] text-slate-400 font-medium">
+                            <span class="inline-flex items-center bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-600">
+                                <i class="fa-solid fa-camera ml-1 text-blue-500"></i> صور: JPG, PNG, WEBP
+                            </span>
+                            <span class="inline-flex items-center bg-white px-2 py-0.5 rounded-md border border-slate-200 text-slate-600">
+                                <i class="fa-solid fa-video ml-1 text-rose-500"></i> فيديوهات: MP4, MOV, WEBM, MKV
+                            </span>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block text-[11px] font-bold text-slate-600 mb-1">أو رابط فيديو (يوتيوب / Google Drive)</label>
-                        <input type="url" name="video_url" placeholder="https://..." class="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs focus:ring-2 focus:ring-rose-500 focus:outline-none">
+                </div>
+
+                <!-- Section: Analyzed Videos (قسم الفيديوهات) -->
+                <div id="rep_videos_section" class="hidden space-y-2 bg-rose-50/50 border border-rose-200/80 rounded-2xl p-3.5">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2 space-x-reverse">
+                            <div class="w-6 h-6 rounded-lg bg-rose-500 text-white flex items-center justify-center text-xs">
+                                <i class="fa-solid fa-video"></i>
+                            </div>
+                            <span class="text-xs font-black text-rose-950">قسم الفيديوهات</span>
+                        </div>
+                        <span id="rep_videos_count_badge" class="text-[11px] font-black bg-rose-100 text-rose-800 px-2.5 py-0.5 rounded-full border border-rose-200">
+                            0 فيديو
+                        </span>
                     </div>
+                    <div id="rep_videos_list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                        <!-- Populated dynamically by JS -->
+                    </div>
+                </div>
+
+                <!-- Section: Analyzed Photos (قسم الصور) -->
+                <div id="rep_photos_section" class="hidden space-y-2 bg-blue-50/50 border border-blue-200/80 rounded-2xl p-3.5">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-2 space-x-reverse">
+                            <div class="w-6 h-6 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs">
+                                <i class="fa-solid fa-images"></i>
+                            </div>
+                            <span class="text-xs font-black text-blue-950">قسم الصور</span>
+                        </div>
+                        <span id="rep_photos_count_badge" class="text-[11px] font-black bg-blue-100 text-blue-800 px-2.5 py-0.5 rounded-full border border-blue-200">
+                            0 صورة
+                        </span>
+                    </div>
+                    <div id="rep_photos_grid" class="grid grid-cols-3 sm:grid-cols-5 md:grid-cols-6 gap-2 pt-1">
+                        <!-- Populated dynamically by JS -->
+                    </div>
+                </div>
+
+                <!-- Optional External Video Link -->
+                <div>
+                    <details class="group bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs">
+                        <summary class="font-bold text-slate-600 cursor-pointer flex items-center justify-between select-none">
+                            <span class="flex items-center">
+                                <i class="fa-solid fa-link ml-1.5 text-slate-400 group-open:text-indigo-600"></i>
+                                إضافة رابط فيديو خارجي (يوتيوب أو Google Drive) - اختياري
+                            </span>
+                            <i class="fa-solid fa-chevron-down text-[10px] text-slate-400 group-open:rotate-180 transition-transform"></i>
+                        </summary>
+                        <div class="pt-2 mt-2 border-t border-slate-200/60">
+                            <input type="url" name="video_url" placeholder="https://www.youtube.com/watch?v=... أو https://drive.google.com/..." class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-mono">
+                        </div>
+                    </details>
                 </div>
             </div>
 
@@ -2377,7 +2983,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="flex items-center space-x-2 space-x-reverse pt-2">
                 <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm flex items-center justify-center">
                     <i class="fa-solid fa-cloud-arrow-up ml-1.5"></i>
-                    حفظ التقرير وإرفاق الصور
+                    حفظ التقرير ورفع الوسائط
                 </button>
                 <button type="button" onclick="closeModal('add-daily-report-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-sm">
                     إلغاء
@@ -2386,6 +2992,116 @@ require_once __DIR__ . '/includes/header.php';
         </form>
     </div>
 </div>
+
+<!-- Modal: Upload Engineering Blueprint -->
+<div id="upload-blueprint-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="modal-backdrop fixed inset-0" onclick="closeModal('upload-blueprint-modal')"></div>
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 max-h-[92vh] overflow-y-auto">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-5">
+            <div class="flex items-center space-x-2.5 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-cyan-100 text-cyan-600 flex items-center justify-center text-lg font-bold">
+                    <i class="fa-solid fa-compass-drafting"></i>
+                </div>
+                <div>
+                    <h3 class="font-black text-slate-800 text-lg">رفع مخطط هندسي جديد</h3>
+                    <p class="text-xs text-slate-500">مشروع: <?= htmlspecialchars($project['name']) ?></p>
+                </div>
+            </div>
+            <button onclick="closeModal('upload-blueprint-modal')" class="text-slate-400 hover:text-slate-600 text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <form action="project_view.php?id=<?= $projectId ?>" method="POST" enctype="multipart/form-data" class="space-y-4">
+            <?= getCSRFInput() ?>
+            <input type="hidden" name="action" value="upload_blueprint">
+
+            <!-- 1: Blueprint Title -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                    اسم / عنوان المخطط الهندسي <span class="text-red-500">*</span>
+                </label>
+                <input type="text" name="title" required placeholder="مثال: المخطط المعماري للدور الأرضي والواجهات" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-4 py-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+            </div>
+
+            <!-- 2: Blueprint Type -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                    تصنيف ونوع المخطط <span class="text-red-500">*</span>
+                </label>
+                <select name="blueprint_type" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-cyan-500 focus:outline-none">
+                    <option value="معماري">مخطط معماري (Architectural)</option>
+                    <option value="إنشائي">مخطط إنشائي (Structural)</option>
+                    <option value="كهرباء (MEP)">مخطط كهرباء وإنارة MEP</option>
+                    <option value="صحي / سباكة">مخطط تمديدات صحية وسباكة</option>
+                    <option value="تكييف وميكانيكا">مخطط تكييف وتهوية وميكانيكا</option>
+                    <option value="كروكي ورخصة">كروكي مساحي ورخصة بناء</option>
+                    <option value="ديكور وتشطيبات">مخطط ديكور وتشطيبات داخلية</option>
+                    <option value="مخطط شامل" selected>مخطط شامل / عام</option>
+                </select>
+            </div>
+
+            <!-- 3: File Input Drag & Drop -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                    ملف المخطط الهندسي <span class="text-red-500">*</span>
+                </label>
+                <div class="relative border-2 border-dashed border-cyan-300 hover:border-cyan-500 rounded-2xl p-5 bg-cyan-50/30 hover:bg-cyan-50/60 transition-all text-center cursor-pointer group" onclick="document.getElementById('view_blueprint_file_input').click()">
+                    <input type="file" id="view_blueprint_file_input" name="blueprint_file" required accept=".pdf,.dwg,.dxf,.cad,.rvt,.ifc,.png,.jpg,.jpeg,.webp,.zip,.rar" class="hidden" onchange="previewSingleBlueprint(this)">
+                    <div class="flex flex-col items-center justify-center space-y-1.5 text-cyan-700">
+                        <i class="fa-solid fa-cloud-arrow-up text-3xl mb-1 text-cyan-600 group-hover:scale-110 transition"></i>
+                        <span class="text-xs font-black" id="view_bp_label">اضغط لاختيار ملف المخطط الهندسي</span>
+                        <span class="text-[11px] text-slate-400">يدعم صيغ PDF، أوتوكاد CAD/DWG/DXF، وصور JPG/PNG، وملفات مضغوطة ZIP</span>
+                    </div>
+                </div>
+                <div id="view_bp_preview" class="mt-2.5 hidden">
+                    <div class="p-2.5 bg-cyan-50 rounded-xl border border-cyan-200 text-xs text-cyan-900 font-bold flex items-center justify-between">
+                        <span class="truncate flex items-center gap-1.5">
+                            <i class="fa-solid fa-file-circle-check text-cyan-600 text-sm"></i>
+                            <span id="view_bp_filename"></span>
+                        </span>
+                        <span id="view_bp_filesize" class="text-[10px] text-slate-500 font-mono shrink-0"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4: Notes -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">
+                    ملاحظات وتوصيات إضافية <span class="text-slate-400 font-normal">(اختياري)</span>
+                </label>
+                <textarea name="notes" rows="2" placeholder="ملاحظات على هذا الإصدار أو اعتمادات الاستشاري والبلدية..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2 text-xs focus:bg-white focus:ring-2 focus:ring-cyan-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex items-center space-x-2 space-x-reverse pt-2">
+                <button type="submit" class="flex-1 bg-gradient-to-r from-cyan-600 to-sky-600 hover:from-cyan-700 hover:to-sky-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm flex items-center justify-center">
+                    <i class="fa-solid fa-check ml-1.5"></i>
+                    رفع وحفظ المخطط الآن
+                </button>
+                <button type="button" onclick="closeModal('upload-blueprint-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-sm">
+                    إلغاء
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+function previewSingleBlueprint(input) {
+    const preview = document.getElementById('view_bp_preview');
+    const label = document.getElementById('view_bp_label');
+    const fn = document.getElementById('view_bp_filename');
+    const fs = document.getElementById('view_bp_filesize');
+    if (input.files && input.files[0]) {
+        const file = input.files[0];
+        if (label) label.innerText = 'تم اختيار ملف: ' + file.name;
+        if (fn) fn.innerText = file.name;
+        if (fs) fs.innerText = (file.size / (1024 * 1024)).toFixed(2) + ' MB';
+        if (preview) preview.classList.remove('hidden');
+    }
+}
+</script>
 
 <!-- Modal: Lightbox for Report Images -->
 <div id="report-image-lightbox-modal" class="fixed inset-0 z-50 bg-slate-900/85 backdrop-blur-sm hidden items-center justify-center p-4" onclick="closeReportLightbox()">
@@ -2407,7 +3123,696 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
+<!-- Modal: Edit Expense (تعديل سند الصرف / المصروف) -->
+<div id="edit-project-expense-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="modal-backdrop fixed inset-0" onclick="closeEditExpenseModal()"></div>
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 my-8">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div class="flex items-center space-x-2.5 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-blue-600/20">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </div>
+                <div>
+                    <h3 class="font-black text-slate-900 text-lg">تعديل سند الصرف / الفاتورة</h3>
+                    <p class="text-xs text-slate-400 font-mono mt-0.5" id="edit_exp_modal_subtitle">رقم السند: VCH-XXXX</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeEditExpenseModal()" class="text-slate-400 hover:text-slate-600 text-lg p-1.5">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <form action="project_view.php?id=<?= $projectId ?>" method="POST" enctype="multipart/form-data" class="space-y-4">
+            <?= getCSRFInput() ?>
+            <input type="hidden" name="action" value="edit_expense">
+            <input type="hidden" name="expense_id" id="edit_exp_id" value="">
+            <input type="hidden" name="currency" id="edit_exp_currency" value="<?= htmlspecialchars($projCurrency) ?>">
+
+            <!-- Notice: Audit Trail Warning -->
+            <div class="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
+                <i class="fa-solid fa-shield-halved text-amber-600 text-base mt-0.5 shrink-0"></i>
+                <div>
+                    <strong class="block font-bold">نظام الرقابة والتدقيق (Equals) نشط:</strong>
+                    <span>سيتم توثيق هذا التعديل في سجل النظام باسمك وتوقيتك وبيانات جهازك، وتحديث رصيد الخزنة تلقائياً.</span>
+                </div>
+            </div>
+
+            <!-- Title & Category -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">بيان وسبب الصرف <span class="text-red-500">*</span></label>
+                    <input type="text" name="title" id="edit_exp_title" required placeholder="مثال: سباكة، كهرباء، أسمنت..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">التصنيف / البند</label>
+                    <select name="category_id" id="edit_exp_category_id" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="">مصروف عام (بدون تصنيف)</option>
+                        <?php foreach ($allCategoriesList as $cat): ?>
+                            <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Amount & VAT calculation -->
+            <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ الأساسي (قبل الضريبة) <span class="text-red-500">*</span></label>
+                        <div class="relative">
+                            <input type="number" step="0.01" min="0.01" id="edit_exp_amount" name="amount" required oninput="calcEditExpenseTotal()" class="w-full text-lg font-black bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+                            <span class="absolute left-3 top-2 font-bold text-slate-400 text-xs" id="edit_exp_currency_label"><?= $projCurrency ?></span>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ الصرف</label>
+                        <input type="date" name="expense_date" id="edit_exp_date" required class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+                </div>
+
+                <!-- VAT checkbox & live total preview -->
+                <div class="flex items-center justify-between p-2.5 bg-white rounded-xl border border-slate-200">
+                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                        <input type="checkbox" id="edit_exp_apply_vat" name="apply_vat" value="1" onchange="calcEditExpenseTotal()" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+                        <span class="text-xs font-bold text-slate-800">تطبيق ضريبة القيمة المضافة (15% VAT)</span>
+                    </label>
+                    <span id="edit_exp_vat_preview" class="text-xs font-mono font-bold text-slate-400">+ 0.00</span>
+                </div>
+
+                <div class="flex items-center justify-between pt-1 border-t border-slate-200 text-xs">
+                    <span class="font-bold text-slate-600">المجموع النهائي بعد التعديل:</span>
+                    <strong id="edit_exp_total_preview" class="text-base font-black text-rose-600 font-mono">0.00 <?= $projCurrency ?></strong>
+                </div>
+            </div>
+
+            <!-- Beneficiary info -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">اسم المستفيد</label>
+                    <input type="text" name="beneficiary_name" id="edit_exp_bname" placeholder="اسم المورد أو الفني" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم الهوية / السجل</label>
+                    <input type="text" name="beneficiary_id_number" id="edit_exp_bid" placeholder="رقم الهوية" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم الجوال</label>
+                    <input type="text" name="beneficiary_phone" id="edit_exp_bphone" placeholder="05XXXXXXXX" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Payment method & Reason for edit -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-bold text-slate-700 mb-1">طريقة الخصم</label>
+                    <select name="payment_method" id="edit_exp_pmethod" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        <option value="نقدي">نقدي</option>
+                        <option value="كاش">كاش</option>
+                        <option value="تحويل بنكي">تحويل بنكي</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-amber-800 mb-1">سبب التعديل (لتوثيقه في سجل Equals) <span class="text-amber-600">*</span></label>
+                    <input type="text" name="edit_reason" id="edit_exp_reason" required placeholder="مثلاً: تصحيح خطأ بالمبلغ، تحديث المورد..." class="w-full bg-amber-50/50 border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                </div>
+            </div>
+
+            <!-- Description / Notes -->
+            <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1">ملاحظات وتفاصيل إضافية</label>
+                <textarea name="description" id="edit_exp_desc" rows="2" placeholder="أي تفاصيل أو ملاحظات تخص الفاتورة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- Attachments Management: View Existing, Delete, and Add More (Append) -->
+            <div class="border border-slate-200 rounded-2xl p-3.5 bg-slate-50/70 space-y-3">
+                <div class="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                    <label class="block text-xs font-bold text-slate-800 flex items-center">
+                        <i class="fa-solid fa-receipt text-indigo-600 ml-1.5"></i>
+                        فواتير ومستندات المصروف المرفقة
+                    </label>
+                    <span id="edit_exp_att_badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
+                        0 فواتير
+                    </span>
+                </div>
+
+                <!-- Hidden inputs for deleted attachments -->
+                <div id="edit_exp_deleted_inputs"></div>
+
+                <!-- Existing Invoices List -->
+                <div>
+                    <span class="text-[11px] font-bold text-slate-600 block mb-1.5">
+                        <i class="fa-solid fa-folder-open text-amber-500 ml-1"></i>
+                        الفواتير المحفوظة حالياً (يمكنك حذف أي منها):
+                    </span>
+                    <div id="edit_exp_existing_list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-0.5">
+                        <!-- Populated dynamically via JS -->
+                    </div>
+                    <div id="edit_exp_no_existing" class="text-[11px] text-slate-400 italic py-2 text-center bg-white rounded-xl border border-dashed border-slate-200 hidden">
+                        لا توجد أي فواتير مرفقة مسجلة لهذا المصروف حالياً.
+                    </div>
+                </div>
+
+                <!-- Add New Invoices Section (Append without replacing) -->
+                <div class="pt-2 border-t border-slate-200/80">
+                    <span class="text-[11px] font-bold text-slate-700 block mb-1.5">
+                        <i class="fa-solid fa-circle-plus text-emerald-600 ml-1"></i>
+                        إضافة فواتير جديدة (تُضاف مع الفواتير السابقة دون استبدالها):
+                    </span>
+                    <div id="edit_exp_dropzone" onclick="document.getElementById('edit_exp_new_files_input').click()" class="border-2 border-dashed border-blue-200 hover:border-blue-400 bg-white rounded-xl p-3.5 text-center cursor-pointer transition hover:bg-blue-50/30">
+                        <input type="file" id="edit_exp_new_files_input" name="invoice_files[]" multiple accept="image/*,.pdf" class="hidden">
+                        <div class="flex flex-col items-center justify-center pointer-events-none">
+                            <i class="fa-solid fa-cloud-arrow-up text-blue-500 text-2xl mb-1"></i>
+                            <p class="text-xs font-bold text-slate-700">اضغط هنا لاختيار فواتير جديدة أو اسحبها وأفلتها</p>
+                            <p class="text-[10px] text-slate-400 mt-0.5">يمكنك رفع عدة فواتير بصيغ (JPG, PNG, PDF)</p>
+                        </div>
+                    </div>
+
+                    <!-- Selected New Files Preview List -->
+                    <div id="edit_exp_new_preview" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 hidden max-h-36 overflow-y-auto p-0.5">
+                        <!-- New files selected appear here with preview & remove button -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action buttons -->
+            <div class="flex items-center space-x-2 space-x-reverse pt-2">
+                <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-xs sm:text-sm flex items-center justify-center">
+                    <i class="fa-solid fa-floppy-disk ml-1.5"></i> حفظ التعديلات والتحديث المالي
+                </button>
+                <button type="button" onclick="closeEditExpenseModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-xs sm:text-sm">
+                    إلغاء
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Expense History (Equals Audit Trail) -->
+<div id="expense-history-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="modal-backdrop fixed inset-0" onclick="closeExpenseHistoryModal()"></div>
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-2xl w-full p-6 sm:p-7 z-10 border border-slate-100 modal-animate-enter my-8">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div class="flex items-center space-x-3 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center text-lg font-bold shadow-md shadow-amber-500/20">
+                    <i class="fa-solid fa-clock-rotate-left"></i>
+                </div>
+                <div>
+                    <h3 class="font-black text-slate-900 text-lg">سجل رقابة وتعديلات السند (Equals)</h3>
+                    <p id="hist_modal_subtitle" class="text-xs text-slate-500 font-mono mt-0.5">VCH-XXXX</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeExpenseHistoryModal()" class="text-slate-400 hover:text-slate-600 text-lg p-1.5">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <!-- History Content (Loaded via AJAX) -->
+        <div id="hist_modal_content" class="space-y-4 max-h-[65vh] overflow-y-auto pr-1">
+            <div class="text-center py-10 text-slate-400">
+                <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-amber-500"></i>
+                <p class="text-xs font-bold">جاري تحميل سجل العمليات والتدقيق...</p>
+            </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex items-center justify-between">
+            <a href="audit_logs.php" target="_blank" class="text-xs font-bold text-amber-700 hover:text-amber-800 flex items-center">
+                <i class="fa-solid fa-arrow-up-right-from-square ml-1.5 text-[11px]"></i>
+                فتح السجل العام للرقابة (Equals)
+            </a>
+            <button type="button" onclick="closeExpenseHistoryModal()" class="bg-slate-900 hover:bg-slate-800 text-white font-bold px-6 py-2 rounded-xl text-xs transition">
+                إغلاق
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal: Expense Invoices Gallery (Multiple Invoices Full Preview) -->
+<div id="expense-invoices-gallery-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="modal-backdrop fixed inset-0" onclick="closeExpenseInvoicesModal()"></div>
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-3xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 max-h-[92vh] overflow-y-auto">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
+            <div class="flex items-center space-x-2.5 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-600 flex items-center justify-center text-lg font-bold">
+                    <i class="fa-solid fa-receipt"></i>
+                </div>
+                <div>
+                    <h3 id="inv_gallery_title" class="font-black text-slate-800 text-base sm:text-lg">فواتير وإيصالات المصروف</h3>
+                    <p id="inv_gallery_subtitle" class="text-xs text-slate-500 font-mono"></p>
+                </div>
+            </div>
+            <button onclick="closeExpenseInvoicesModal()" class="text-slate-400 hover:text-slate-600 text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <div id="inv_gallery_container" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2">
+            <!-- Dynamic invoice items -->
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 mt-5 flex justify-end">
+            <button type="button" onclick="closeExpenseInvoicesModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-2 px-5 rounded-xl text-xs transition">
+                إغلاق
+            </button>
+        </div>
+    </div>
+</div>
+
 <script>
+window.FIELD_NAMES_AR = {
+    'amount': 'المبلغ الإجمالي',
+    'title': 'بيان / سبب الصرف',
+    'category_name': 'التصنيف / البند',
+    'expense_date': 'تاريخ الصرف',
+    'currency': 'العملة',
+    'tax_amount': 'مبلغ الضريبة',
+    'beneficiary_name': 'المستفيد',
+    'beneficiary_id_number': 'رقم هوية المستفيد',
+    'beneficiary_phone': 'رقم هاتف المستفيد',
+    'payment_method': 'طريقة الدفع',
+    'invoice_attachment': 'مرفق الفاتورة',
+    'edit_reason': 'سبب التعديل'
+};
+
+let editExpExistingAttachments = [];
+let editExpDeletedIds = new Set();
+let editExpNewFilesData = [];
+
+function openEditExpenseModal(exp, attachments) {
+    const pCurrency = '<?= addslashes($projCurrency) ?>';
+    document.getElementById('edit_exp_id').value = exp.id || '';
+    document.getElementById('edit_exp_modal_subtitle').innerText = 'سند صرف رقم: ' + (exp.voucher_number || ('VCH-' + exp.id)) + ' | المشروع: <?= addslashes($project['name']) ?>';
+    document.getElementById('edit_exp_title').value = exp.title || '';
+    document.getElementById('edit_exp_currency').value = exp.currency || pCurrency;
+    document.getElementById('edit_exp_currency_label').innerText = exp.currency || pCurrency;
+    
+    // Base amount: if tax_amount exists, base = amount - tax_amount
+    const totalAmt = parseFloat(exp.amount) || 0;
+    const taxAmt = parseFloat(exp.tax_amount) || 0;
+    const baseAmt = taxAmt > 0 ? (totalAmt - taxAmt) : totalAmt;
+    document.getElementById('edit_exp_amount').value = baseAmt.toFixed(2);
+
+    document.getElementById('edit_exp_date').value = exp.expense_date ? exp.expense_date.substring(0, 10) : '';
+    document.getElementById('edit_exp_category_id').value = exp.category_id || '';
+    document.getElementById('edit_exp_apply_vat').checked = taxAmt > 0;
+
+    document.getElementById('edit_exp_bname').value = exp.beneficiary_name || '';
+    document.getElementById('edit_exp_bid').value = exp.beneficiary_id_number || '';
+    document.getElementById('edit_exp_bphone').value = exp.beneficiary_phone || '';
+    document.getElementById('edit_exp_pmethod').value = exp.payment_method || 'نقدي';
+    document.getElementById('edit_exp_desc').value = exp.description || '';
+    document.getElementById('edit_exp_reason').value = exp.edit_reason || '';
+
+    // Initialize attachments
+    editExpExistingAttachments = Array.isArray(attachments) ? JSON.parse(JSON.stringify(attachments)) : [];
+    if (editExpExistingAttachments.length === 0 && exp && exp.invoice_attachment) {
+        const cleanPath = String(exp.invoice_attachment).replace(/^\/+/, '');
+        const fname = cleanPath.split('/').pop() || 'فاتورة';
+        const fext = fname.includes('.') ? fname.split('.').pop().toLowerCase() : '';
+        editExpExistingAttachments.push({
+            id: 0,
+            file_path: cleanPath,
+            file_name: fname,
+            file_ext: fext
+        });
+    }
+
+    editExpDeletedIds.clear();
+    editExpNewFilesData = [];
+    const input = document.getElementById('edit_exp_new_files_input');
+    if (input) input.value = '';
+
+    renderEditExpExistingList();
+    renderEditExpNewFiles();
+
+    // Async check to guarantee we fetch all attached invoices even if table row had partial data
+    if (exp && exp.id) {
+        fetch('ajax_expense_attachments.php?expense_id=' + exp.id)
+            .then(res => res.json())
+            .then(data => {
+                if (data && data.success && Array.isArray(data.attachments)) {
+                    if (data.attachments.length > 0 || editExpExistingAttachments.length === 0) {
+                        editExpExistingAttachments = data.attachments;
+                        renderEditExpExistingList();
+                    }
+                }
+            })
+            .catch(() => {});
+    }
+
+    calcEditExpenseTotal();
+    openModal('edit-project-expense-modal');
+}
+
+function renderEditExpExistingList() {
+    const listEl = document.getElementById('edit_exp_existing_list');
+    const noEl = document.getElementById('edit_exp_no_existing');
+    const badgeEl = document.getElementById('edit_exp_att_badge');
+    const delInputs = document.getElementById('edit_exp_deleted_inputs');
+
+    if (!listEl) return;
+    listEl.innerHTML = '';
+    if (delInputs) delInputs.innerHTML = '';
+
+    const activeCount = editExpExistingAttachments.filter(a => !editExpDeletedIds.has(a.id)).length;
+    if (badgeEl) badgeEl.innerText = activeCount + ' فواتير';
+
+    if (editExpExistingAttachments.length === 0) {
+        if (noEl) noEl.classList.remove('hidden');
+        return;
+    }
+    if (noEl) noEl.classList.add('hidden');
+
+    if (delInputs) {
+        editExpDeletedIds.forEach(id => {
+            const hid = document.createElement('input');
+            hid.type = 'hidden';
+            hid.name = 'delete_attachment_ids[]';
+            hid.value = id;
+            delInputs.appendChild(hid);
+        });
+    }
+
+    editExpExistingAttachments.forEach(att => {
+        const isDeleted = editExpDeletedIds.has(att.id);
+        const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes((att.file_ext || '').toLowerCase());
+        const card = document.createElement('div');
+        card.className = `flex items-center justify-between p-2 rounded-xl border text-xs transition ${
+            isDeleted 
+                ? 'bg-rose-50/80 border-rose-300 opacity-70 line-through text-rose-800' 
+                : 'bg-white border-slate-200 text-slate-800 shadow-2xs hover:border-slate-300'
+        }`;
+
+        const leftSide = document.createElement('div');
+        leftSide.className = 'flex items-center space-x-2 space-x-reverse min-w-0 flex-1';
+
+        if (isImg) {
+            leftSide.innerHTML = `
+                <img src="${att.file_path}" alt="فاتورة" class="w-8 h-8 rounded-lg object-cover border border-slate-200 shrink-0">
+                <div class="min-w-0 flex-1">
+                    <p class="font-bold truncate text-[11px]" title="${att.file_name}">${att.file_name}</p>
+                    <span class="text-[9px] text-slate-400 font-mono block uppercase">${att.file_ext || 'IMG'}</span>
+                </div>
+            `;
+        } else {
+            leftSide.innerHTML = `
+                <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center text-sm shrink-0 border border-rose-100">
+                    <i class="fa-solid fa-file-pdf"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <p class="font-bold truncate text-[11px]" title="${att.file_name}">${att.file_name}</p>
+                    <span class="text-[9px] text-slate-400 font-mono block uppercase">${att.file_ext || 'PDF'}</span>
+                </div>
+            `;
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'flex items-center space-x-1 space-x-reverse shrink-0 mr-1.5';
+
+        if (!isDeleted) {
+            const previewBtn = document.createElement('a');
+            previewBtn.href = att.file_path;
+            previewBtn.target = '_blank';
+            previewBtn.className = 'p-1.5 text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 rounded-lg text-xs transition';
+            previewBtn.title = 'معاينة الفاتورة';
+            previewBtn.innerHTML = '<i class="fa-solid fa-arrow-up-right-from-square"></i>';
+            actions.appendChild(previewBtn);
+        }
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        if (isDeleted) {
+            toggleBtn.className = 'px-2 py-1 text-[10px] font-bold text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-100 shadow-2xs transition';
+            toggleBtn.innerText = 'تراجع';
+            toggleBtn.onclick = () => {
+                editExpDeletedIds.delete(att.id);
+                renderEditExpExistingList();
+            };
+        } else {
+            toggleBtn.className = 'p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg text-xs transition';
+            toggleBtn.title = 'حذف هذه الفاتورة';
+            toggleBtn.innerHTML = '<i class="fa-solid fa-trash-can"></i>';
+            toggleBtn.onclick = () => {
+                editExpDeletedIds.add(att.id);
+                renderEditExpExistingList();
+            };
+        }
+        actions.appendChild(toggleBtn);
+
+        card.appendChild(leftSide);
+        card.appendChild(actions);
+        listEl.appendChild(card);
+    });
+}
+
+function handleEditExpFilesSelected(files) {
+    if (!files || files.length === 0) return;
+    for (let i = 0; i < files.length; i++) {
+        editExpNewFilesData.push(files[i]);
+    }
+    syncEditExpNewFilesInput();
+    renderEditExpNewFiles();
+}
+
+function syncEditExpNewFilesInput() {
+    const input = document.getElementById('edit_exp_new_files_input');
+    if (!input) return;
+    try {
+        const dt = new DataTransfer();
+        editExpNewFilesData.forEach(file => dt.items.add(file));
+        input.files = dt.files;
+    } catch(e) {
+        // Fallback for older browsers
+    }
+}
+
+function removeEditExpNewFile(idx) {
+    editExpNewFilesData.splice(idx, 1);
+    syncEditExpNewFilesInput();
+    renderEditExpNewFiles();
+}
+
+function renderEditExpNewFiles() {
+    const previewContainer = document.getElementById('edit_exp_new_preview');
+    if (!previewContainer) return;
+    previewContainer.innerHTML = '';
+
+    if (editExpNewFilesData.length === 0) {
+        previewContainer.classList.add('hidden');
+        return;
+    }
+    previewContainer.classList.remove('hidden');
+
+    editExpNewFilesData.forEach((file, idx) => {
+        const isImg = file.type.startsWith('image/');
+        const card = document.createElement('div');
+        card.className = 'flex items-center justify-between p-2 rounded-xl border border-emerald-200 bg-emerald-50/70 text-xs shadow-2xs';
+
+        const leftSide = document.createElement('div');
+        leftSide.className = 'flex items-center space-x-2 space-x-reverse min-w-0 flex-1';
+
+        const thumb = document.createElement('div');
+        thumb.className = 'w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0 overflow-hidden text-sm';
+        if (isImg) {
+            const img = document.createElement('img');
+            img.className = 'w-full h-full object-cover';
+            img.src = URL.createObjectURL(file);
+            thumb.appendChild(img);
+        } else {
+            thumb.innerHTML = '<i class="fa-solid fa-file-pdf text-red-500"></i>';
+        }
+
+        const info = document.createElement('div');
+        info.className = 'min-w-0 flex-1';
+        info.innerHTML = `
+            <p class="font-bold truncate text-[11px] text-emerald-950" title="${file.name}">${file.name}</p>
+            <span class="text-[9px] text-emerald-700 font-mono block">جديد (+ ${(file.size / 1024).toFixed(0)} KB)</span>
+        `;
+
+        leftSide.appendChild(thumb);
+        leftSide.appendChild(info);
+
+        const rmBtn = document.createElement('button');
+        rmBtn.type = 'button';
+        rmBtn.className = 'p-1.5 text-rose-500 hover:text-rose-700 hover:bg-rose-100 rounded-lg text-xs shrink-0 mr-1 transition';
+        rmBtn.title = 'إلغاء هذا الملف الجديد';
+        rmBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+        rmBtn.onclick = () => removeEditExpNewFile(idx);
+
+        card.appendChild(leftSide);
+        card.appendChild(rmBtn);
+        previewContainer.appendChild(card);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    const editDropzone = document.getElementById('edit_exp_dropzone');
+    const editFileInput = document.getElementById('edit_exp_new_files_input');
+    if (editFileInput) {
+        editFileInput.addEventListener('change', function(e) {
+            handleEditExpFilesSelected(e.target.files);
+        });
+    }
+    if (editDropzone) {
+        ['dragenter', 'dragover'].forEach(evt => {
+            editDropzone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                editDropzone.classList.add('border-blue-500', 'bg-blue-50/50');
+            });
+        });
+        ['dragleave', 'drop'].forEach(evt => {
+            editDropzone.addEventListener(evt, function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                editDropzone.classList.remove('border-blue-500', 'bg-blue-50/50');
+            });
+        });
+        editDropzone.addEventListener('drop', function(e) {
+            const files = e.dataTransfer ? e.dataTransfer.files : [];
+            if (files && files.length > 0) {
+                handleEditExpFilesSelected(files);
+            }
+        });
+    }
+});
+
+function closeEditExpenseModal() {
+    closeModal('edit-project-expense-modal');
+}
+
+function calcEditExpenseTotal() {
+    const amtInput = document.getElementById('edit_exp_amount');
+    const isVat = document.getElementById('edit_exp_apply_vat').checked;
+    const curr = document.getElementById('edit_exp_currency').value || 'ر.س';
+    const vatRate = (curr === 'ج.م') ? 14.0 : 15.0;
+
+    const base = parseFloat(amtInput.value) || 0;
+    const vat = isVat ? Math.round(base * (vatRate / 100) * 100) / 100 : 0;
+    const total = base + vat;
+
+    document.getElementById('edit_exp_vat_preview').innerText = isVat ? `+ ${vat.toFixed(2)} (${vatRate}% VAT)` : `بدون ضريبة (0.00)`;
+    document.getElementById('edit_exp_total_preview').innerText = `${total.toFixed(2)} ${curr}`;
+}
+
+function openExpenseHistoryModal(expenseId) {
+    const content = document.getElementById('hist_modal_content');
+    const sub = document.getElementById('hist_modal_subtitle');
+    
+    sub.innerText = 'سند صرف رقم: #' + expenseId;
+    content.innerHTML = `
+        <div class="text-center py-10 text-slate-400">
+            <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-amber-500"></i>
+            <p class="text-xs font-bold">جاري تحميل سجل العمليات والتدقيق...</p>
+        </div>
+    `;
+
+    openModal('expense-history-modal');
+
+    fetch('ajax_expense_history.php?id=' + expenseId)
+        .then(res => res.json())
+        .then(data => {
+            if (!data.success) {
+                content.innerHTML = `<div class="p-4 bg-rose-50 text-rose-700 rounded-2xl text-xs font-bold">${data.error || 'فشل تحميل السجل'}</div>`;
+                return;
+            }
+
+            sub.innerText = 'سند: ' + data.expense.voucher_number + ' - ' + data.expense.title;
+            
+            if (!data.logs || data.logs.length === 0) {
+                content.innerHTML = `
+                    <div class="text-center py-8 text-slate-400">
+                        <i class="fa-solid fa-file-circle-check text-3xl mb-2 text-slate-300"></i>
+                        <p class="text-xs font-bold">لا توجد تعديلات مسجلة على هذا السند بعد. تم إصداره بحالته الأصلية.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            let html = '';
+            data.logs.forEach(log => {
+                const isEdit = log.action === 'edit';
+                const actionBadgeClass = isEdit ? 'bg-amber-100 text-amber-900 border-amber-300' : 'bg-emerald-100 text-emerald-900 border-emerald-300';
+                const actionName = isEdit ? 'تعديل وتصحيح' : 'إصدار أصلي';
+
+                html += `
+                    <div class="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
+                        <div class="flex items-center justify-between">
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black ${actionBadgeClass} border">
+                                <i class="fa-solid ${isEdit ? 'fa-pen-to-square' : 'fa-plus'} ml-1 text-[9px]"></i>
+                                ${actionName}
+                            </span>
+                            <span class="text-[11px] font-mono text-slate-400 font-bold">
+                                <i class="fa-regular fa-clock ml-1"></i> ${log.created_at_formatted}
+                            </span>
+                        </div>
+
+                        <div class="text-xs text-slate-800 leading-relaxed font-bold">
+                            ${log.summary}
+                        </div>
+
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px] text-slate-500 pt-2 border-t border-slate-200/60">
+                            <div>
+                                <i class="fa-solid fa-user-pen ml-1 text-slate-400"></i> المنفذ: <strong class="text-slate-800">${log.user_name}</strong> (${log.user_role})
+                            </div>
+                            <div>
+                                <i class="fa-solid fa-laptop ml-1 text-slate-400"></i> الجهاز: <strong class="text-slate-700">${log.device_info}</strong>
+                            </div>
+                            <div class="col-span-full">
+                                <i class="fa-solid fa-network-wired ml-1 text-slate-400"></i> عنوان IP: <span class="font-mono text-slate-600">${log.ip_address}</span>
+                            </div>
+                        </div>
+                `;
+
+                if (log.old_values && log.new_values) {
+                    html += `
+                        <div class="mt-2 pt-2 border-t border-slate-200/60">
+                            <span class="text-[10px] font-bold text-slate-600 block mb-1">جدول المقارنة والفروقات:</span>
+                            <table class="w-full text-right text-[11px] border border-slate-200 rounded-xl overflow-hidden">
+                                <thead>
+                                    <tr class="bg-slate-200/60 text-slate-700">
+                                        <th class="p-1.5 font-bold">الحقل</th>
+                                        <th class="p-1.5 bg-rose-50 text-rose-800 font-bold">السابق</th>
+                                        <th class="p-1.5 bg-emerald-50 text-emerald-800 font-bold">الجديد</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+                    const allKeys = Array.from(new Set([...Object.keys(log.old_values), ...Object.keys(log.new_values)]));
+                    allKeys.forEach(k => {
+                        const oVal = log.old_values[k] !== undefined && log.old_values[k] !== null ? String(log.old_values[k]) : '—';
+                        const nVal = log.new_values[k] !== undefined && log.new_values[k] !== null ? String(log.new_values[k]) : '—';
+                        if (oVal !== nVal) {
+                            const lbl = (window.FIELD_NAMES_AR && window.FIELD_NAMES_AR[k]) ? window.FIELD_NAMES_AR[k] : k;
+                            html += `
+                                <tr class="border-t border-slate-100 bg-white">
+                                    <td class="p-1.5 font-bold text-slate-700">${lbl}</td>
+                                    <td class="p-1.5 bg-rose-50/50 text-rose-900 font-mono">${oVal}</td>
+                                    <td class="p-1.5 bg-emerald-50/50 text-emerald-900 font-mono font-bold">${nVal}</td>
+                                </tr>
+                            `;
+                        }
+                    });
+                    html += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+                }
+
+                html += `</div>`;
+            });
+
+            content.innerHTML = html;
+        })
+        .catch(() => {
+            content.innerHTML = `<div class="p-4 bg-rose-50 text-rose-700 rounded-2xl text-xs font-bold">حدث خطأ أثناء الاتصال بالسيرفر.</div>`;
+        });
+}
+
+function closeExpenseHistoryModal() {
+    closeModal('expense-history-modal');
+}
+
 function switchTab(tabId) {
     document.querySelectorAll('.tab-pane').forEach(el => el.classList.add('hidden'));
     const target = document.getElementById(tabId);
@@ -2445,26 +3850,204 @@ function syncPct(val) {
     if (display) display.innerText = val + '%';
 }
 
-function previewReportPhotos(input) {
-    const grid = document.getElementById('photos_preview_grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-    if (input.files && input.files.length > 0) {
-        grid.classList.remove('hidden');
-        Array.from(input.files).forEach(file => {
-            if (file.type.startsWith('image/')) {
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    const div = document.createElement('div');
-                    div.className = 'aspect-square rounded-xl overflow-hidden bg-slate-100 border border-slate-200';
-                    div.innerHTML = `<img src="${e.target.result}" class="w-full h-full object-cover">`;
-                    grid.appendChild(div);
-                };
-                reader.readAsDataURL(file);
-            }
-        });
+// --- Unified Drag & Drop & Media Analysis for Daily Site Reports ---
+let reportFilesList = []; // In-memory array of selected File objects
+
+function isVideoFile(file) {
+    if (file.type && file.type.startsWith('video/')) return true;
+    const ext = file.name.split('.').pop().toLowerCase();
+    return ['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp'].includes(ext);
+}
+
+function isImageFile(file) {
+    if (file.type && file.type.startsWith('image/')) return true;
+    const ext = file.name.split('.').pop().toLowerCase();
+    return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(ext);
+}
+
+function formatFileSize(bytes) {
+    if (bytes === 0 || !bytes) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function handleReportDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('report_dropzone');
+    if (dropzone) {
+        dropzone.classList.add('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
+    }
+}
+
+function handleReportDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('report_dropzone');
+    if (dropzone) {
+        dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
+    }
+}
+
+function handleReportDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('report_dropzone');
+    if (dropzone) {
+        dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
+    }
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        appendReportFiles(e.dataTransfer.files);
+    }
+}
+
+function handleReportFilesSelected(files) {
+    if (files && files.length > 0) {
+        appendReportFiles(files);
+    }
+}
+
+function appendReportFiles(fileList) {
+    Array.from(fileList).forEach(file => {
+        // Prevent duplicate file entries
+        const exists = reportFilesList.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified);
+        if (!exists) {
+            reportFilesList.push(file);
+        }
+    });
+    syncReportInput();
+    renderReportMediaSections();
+}
+
+function removeReportFile(index) {
+    if (index >= 0 && index < reportFilesList.length) {
+        reportFilesList.splice(index, 1);
+        syncReportInput();
+        renderReportMediaSections();
+    }
+}
+
+function syncReportInput() {
+    const input = document.getElementById('rep_media_input');
+    if (!input) return;
+    try {
+        const dt = new DataTransfer();
+        reportFilesList.forEach(file => dt.items.add(file));
+        input.files = dt.files;
+    } catch (e) {
+        console.warn('DataTransfer sync notice:', e);
+    }
+}
+
+function renderReportMediaSections() {
+    const videosSection = document.getElementById('rep_videos_section');
+    const videosList = document.getElementById('rep_videos_list');
+    const videosCountBadge = document.getElementById('rep_videos_count_badge');
+
+    const photosSection = document.getElementById('rep_photos_section');
+    const photosGrid = document.getElementById('rep_photos_grid');
+    const photosCountBadge = document.getElementById('rep_photos_count_badge');
+
+    const summaryBadge = document.getElementById('rep_media_badge_summary');
+
+    if (!videosSection || !videosList || !photosSection || !photosGrid) return;
+
+    videosList.innerHTML = '';
+    photosGrid.innerHTML = '';
+
+    let videoCount = 0;
+    let photoCount = 0;
+
+    reportFilesList.forEach((file, index) => {
+        if (isVideoFile(file)) {
+            videoCount++;
+            const card = document.createElement('div');
+            card.className = 'flex items-center justify-between p-2.5 rounded-xl bg-white border border-rose-200 shadow-2xs hover:shadow-xs transition';
+            card.innerHTML = `
+                <div class="flex items-center space-x-2 space-x-reverse min-w-0">
+                    <div class="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                        <i class="fa-solid fa-film text-xs"></i>
+                    </div>
+                    <div class="min-w-0 pr-1">
+                        <p class="text-xs font-bold text-slate-800 truncate max-w-[170px]" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</p>
+                        <p class="text-[10px] text-slate-400 font-mono">${formatFileSize(file.size)} &bull; فيديو</p>
+                    </div>
+                </div>
+                <button type="button" onclick="removeReportFile(${index})" class="w-6 h-6 rounded-lg bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 flex items-center justify-center transition shrink-0" title="إزالة هذا الفيديو">
+                    <i class="fa-solid fa-xmark text-xs"></i>
+                </button>
+            `;
+            videosList.appendChild(card);
+        } else if (isImageFile(file)) {
+            photoCount++;
+            const item = document.createElement('div');
+            item.className = 'group relative aspect-square rounded-xl overflow-hidden bg-white border border-blue-200 shadow-2xs';
+
+            const img = document.createElement('img');
+            img.className = 'w-full h-full object-cover';
+            img.src = URL.createObjectURL(file);
+            img.onload = () => URL.revokeObjectURL(img.src);
+
+            const overlay = document.createElement('div');
+            overlay.className = 'absolute inset-0 bg-slate-900/40 opacity-0 group-hover:opacity-100 transition flex items-center justify-between p-1 flex-col';
+
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.className = 'self-end w-5 h-5 rounded-md bg-rose-600 text-white flex items-center justify-center hover:bg-rose-700 shadow-xs text-[10px]';
+            removeBtn.title = 'إزالة هذه الصورة';
+            removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+            removeBtn.onclick = (e) => {
+                e.stopPropagation();
+                removeReportFile(index);
+            };
+
+            const sizeBadge = document.createElement('span');
+            sizeBadge.className = 'text-[9px] text-white font-mono bg-black/60 px-1 py-0.5 rounded-md';
+            sizeBadge.textContent = formatFileSize(file.size);
+
+            overlay.appendChild(removeBtn);
+            overlay.appendChild(sizeBadge);
+
+            item.appendChild(img);
+            item.appendChild(overlay);
+            photosGrid.appendChild(item);
+        }
+    });
+
+    // Toggle Videos Section
+    if (videoCount > 0) {
+        videosSection.classList.remove('hidden');
+        if (videosCountBadge) videosCountBadge.innerText = `${videoCount} فيديو`;
     } else {
-        grid.classList.add('hidden');
+        videosSection.classList.add('hidden');
+    }
+
+    // Toggle Photos Section
+    if (photoCount > 0) {
+        photosSection.classList.remove('hidden');
+        if (photosCountBadge) photosCountBadge.innerText = `${photoCount} صورة`;
+    } else {
+        photosSection.classList.add('hidden');
+    }
+
+    // Toggle Summary Badge
+    const totalCount = videoCount + photoCount;
+    if (summaryBadge) {
+        if (totalCount > 0) {
+            summaryBadge.classList.remove('hidden');
+            summaryBadge.innerText = `تم تحليل: ${photoCount} صورة و ${videoCount} فيديو`;
+        } else {
+            summaryBadge.classList.add('hidden');
+        }
+    }
+}
+
+// Fallback for legacy calls if any
+function previewReportPhotos(input) {
+    if (input && input.files) {
+        handleReportFilesSelected(input.files);
     }
 }
 
@@ -2488,6 +4071,200 @@ function closeReportLightbox() {
         modal.classList.add('hidden');
         modal.classList.remove('flex');
     }
+}
+
+// --- Expense Invoices Gallery Modal (Multiple Invoices Viewer) ---
+function openExpenseInvoicesModal(attachments, title, voucherNo) {
+    const modal = document.getElementById('expense-invoices-gallery-modal');
+    const titleEl = document.getElementById('inv_gallery_title');
+    const subEl = document.getElementById('inv_gallery_subtitle');
+    const container = document.getElementById('inv_gallery_container');
+    if (!modal || !container) return;
+
+    if (titleEl) titleEl.innerText = 'فواتير المصروف: ' + (title || '');
+    if (subEl) subEl.innerText = (voucherNo ? 'سند رقم: ' + voucherNo + ' | ' : '') + 'إجمالي ' + attachments.length + ' فاتورة مرفقة';
+
+    container.innerHTML = '';
+    attachments.forEach((att, idx) => {
+        const ext = (att.file_ext || '').toLowerCase();
+        const isImg = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'].includes(ext);
+        const card = document.createElement('div');
+        card.className = 'flex flex-col justify-between p-3 rounded-2xl bg-slate-50 border border-slate-200 hover:border-indigo-300 transition space-y-2';
+
+        if (isImg) {
+            card.innerHTML = `
+                <div class="relative aspect-4/3 rounded-xl overflow-hidden bg-slate-200 border border-slate-200 cursor-pointer group" onclick="window.open('${att.file_path}', '_blank')">
+                    <img src="${att.file_path}" alt="فاتورة" class="w-full h-full object-cover group-hover:scale-105 transition">
+                    <div class="absolute inset-0 bg-slate-900/30 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition text-sm">
+                        <i class="fa-solid fa-magnifying-glass-plus"></i>
+                    </div>
+                </div>
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="font-bold text-slate-700 truncate max-w-[140px]" title="${att.file_name}">${att.file_name}</span>
+                    <a href="${att.file_path}" target="_blank" download class="text-indigo-600 hover:text-indigo-800 text-[11px] font-bold">
+                        <i class="fa-solid fa-download ml-0.5"></i> تحميل
+                    </a>
+                </div>
+            `;
+        } else {
+            card.innerHTML = `
+                <div class="aspect-4/3 rounded-xl bg-red-50 text-red-600 border border-red-200 flex flex-col items-center justify-center cursor-pointer group hover:bg-red-100 transition" onclick="window.open('${att.file_path}', '_blank')">
+                    <i class="fa-solid fa-file-pdf text-3xl mb-1 group-hover:scale-110 transition"></i>
+                    <span class="text-xs font-black">ملف PDF</span>
+                </div>
+                <div class="flex items-center justify-between text-xs pt-1">
+                    <span class="font-bold text-slate-700 truncate max-w-[140px]" title="${att.file_name}">${att.file_name}</span>
+                    <a href="${att.file_path}" target="_blank" class="text-red-600 hover:text-red-800 text-[11px] font-bold">
+                        <i class="fa-solid fa-arrow-up-right-from-square ml-0.5"></i> فتح
+                    </a>
+                </div>
+            `;
+        }
+        container.appendChild(card);
+    });
+
+    openModal('expense-invoices-gallery-modal');
+}
+
+function closeExpenseInvoicesModal() {
+    closeModal('expense-invoices-gallery-modal');
+}
+
+// --- Quick Project Expense: Multi-File Invoices Drag & Drop ---
+let quickExpAttachedFiles = [];
+
+function handleQuickExpDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('quick_exp_dropzone');
+    if (dropzone) {
+        dropzone.classList.add('border-rose-500', 'bg-rose-50/70', 'ring-2', 'ring-rose-100');
+    }
+}
+
+function handleQuickExpDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('quick_exp_dropzone');
+    if (dropzone) {
+        dropzone.classList.remove('border-rose-500', 'bg-rose-50/70', 'ring-2', 'ring-rose-100');
+    }
+}
+
+function handleQuickExpDrop(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropzone = document.getElementById('quick_exp_dropzone');
+    if (dropzone) {
+        dropzone.classList.remove('border-rose-500', 'bg-rose-50/70', 'ring-2', 'ring-rose-100');
+    }
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        appendQuickExpFiles(e.dataTransfer.files);
+    }
+}
+
+function handleQuickExpFilesSelected(files) {
+    if (files && files.length > 0) {
+        appendQuickExpFiles(files);
+    }
+}
+
+function appendQuickExpFiles(fileList) {
+    Array.from(fileList).forEach(file => {
+        const exists = quickExpAttachedFiles.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified);
+        if (!exists) {
+            quickExpAttachedFiles.push(file);
+        }
+    });
+    syncQuickExpInput();
+    renderQuickExpPreviews();
+}
+
+function removeQuickExpFile(index, e) {
+    if (e) e.stopPropagation();
+    if (index >= 0 && index < quickExpAttachedFiles.length) {
+        quickExpAttachedFiles.splice(index, 1);
+        syncQuickExpInput();
+        renderQuickExpPreviews();
+    }
+}
+
+function syncQuickExpInput() {
+    const input = document.getElementById('quick_exp_files_input');
+    if (!input) return;
+    try {
+        const dt = new DataTransfer();
+        quickExpAttachedFiles.forEach(file => dt.items.add(file));
+        input.files = dt.files;
+    } catch (err) {
+        console.warn('DataTransfer sync warning:', err);
+    }
+}
+
+function renderQuickExpPreviews() {
+    const grid = document.getElementById('quick_exp_preview_grid');
+    const placeholder = document.getElementById('quick_exp_placeholder');
+    const badge = document.getElementById('quick_exp_files_badge');
+
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    if (quickExpAttachedFiles.length === 0) {
+        grid.classList.add('hidden');
+        grid.classList.remove('grid');
+        if (placeholder) placeholder.classList.remove('hidden');
+        if (badge) badge.classList.add('hidden');
+        return;
+    }
+
+    if (placeholder) placeholder.classList.add('hidden');
+    grid.classList.remove('hidden');
+    grid.classList.add('grid');
+
+    if (badge) {
+        badge.classList.remove('hidden');
+        const count = quickExpAttachedFiles.length;
+        badge.innerText = count === 1 ? 'فاتورة واحدة' : `${count} فواتير`;
+    }
+
+    quickExpAttachedFiles.forEach((file, idx) => {
+        const card = document.createElement('div');
+        card.className = 'group relative p-2 rounded-xl bg-white border border-slate-200/90 shadow-2xs hover:shadow-xs transition text-center flex flex-col justify-between';
+        card.onclick = (e) => e.stopPropagation();
+
+        const isImg = file.type && file.type.startsWith('image/');
+        const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+        let mediaPreview = '';
+        if (isImg) {
+            const url = URL.createObjectURL(file);
+            mediaPreview = `<img src="${url}" class="w-full h-14 object-cover rounded-lg mb-1 border border-slate-100" onload="URL.revokeObjectURL('${url}')">`;
+        } else if (isPdf) {
+            mediaPreview = `
+                <div class="w-full h-14 rounded-lg bg-red-50 text-red-600 flex flex-col items-center justify-center mb-1 border border-red-100">
+                    <i class="fa-solid fa-file-pdf text-lg mb-0.5"></i>
+                    <span class="text-[8px] font-black uppercase">PDF</span>
+                </div>
+            `;
+        } else {
+            mediaPreview = `
+                <div class="w-full h-14 rounded-lg bg-slate-100 text-slate-600 flex flex-col items-center justify-center mb-1">
+                    <i class="fa-solid fa-file text-lg mb-0.5"></i>
+                </div>
+            `;
+        }
+
+        card.innerHTML = `
+            ${mediaPreview}
+            <div class="min-w-0 px-0.5">
+                <p class="text-[10px] font-bold text-slate-800 truncate" title="${file.name}">${file.name}</p>
+            </div>
+            <button type="button" onclick="removeQuickExpFile(${idx}, event)" class="absolute -top-1.5 -left-1.5 w-5 h-5 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-xs text-[9px] transition" title="إزالة">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        `;
+        grid.appendChild(card);
+    });
 }
 
 document.addEventListener('DOMContentLoaded', function() {
