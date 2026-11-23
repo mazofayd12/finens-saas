@@ -3126,7 +3126,7 @@ function previewSingleBlueprint(input) {
 <!-- Modal: Edit Expense (تعديل سند الصرف / المصروف) -->
 <div id="edit-project-expense-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
     <div class="modal-backdrop fixed inset-0" onclick="closeEditExpenseModal()"></div>
-    <div class="relative bg-white rounded-3xl shadow-2xl max-w-xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 my-8">
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-4xl xl:max-w-5xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 my-6">
         <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-4">
             <div class="flex items-center space-x-2.5 space-x-reverse">
                 <div class="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center font-bold text-lg shadow-md shadow-blue-600/20">
@@ -3148,158 +3148,169 @@ function previewSingleBlueprint(input) {
             <input type="hidden" name="expense_id" id="edit_exp_id" value="">
             <input type="hidden" name="currency" id="edit_exp_currency" value="<?= htmlspecialchars($projCurrency) ?>">
 
-            <!-- Notice: Audit Trail Warning -->
-            <div class="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-start gap-2.5">
-                <i class="fa-solid fa-shield-halved text-amber-600 text-base mt-0.5 shrink-0"></i>
-                <div>
-                    <strong class="block font-bold">نظام الرقابة والتدقيق (Equals) نشط:</strong>
-                    <span>سيتم توثيق هذا التعديل في سجل النظام باسمك وتوقيتك وبيانات جهازك، وتحديث رصيد الخزنة تلقائياً.</span>
-                </div>
-            </div>
-
-            <!-- Title & Category -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">بيان وسبب الصرف <span class="text-red-500">*</span></label>
-                    <input type="text" name="title" id="edit_exp_title" required placeholder="مثال: سباكة، كهرباء، أسمنت..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">التصنيف / البند</label>
-                    <select name="category_id" id="edit_exp_category_id" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                        <option value="">مصروف عام (بدون تصنيف)</option>
-                        <?php foreach ($allCategoriesList as $cat): ?>
-                            <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Amount & VAT calculation -->
-            <div class="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3">
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <!-- Notice: Audit Trail Warning (Full Width Banner) -->
+            <div class="p-2.5 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-900 flex items-center justify-between gap-2">
+                <div class="flex items-center gap-2">
+                    <i class="fa-solid fa-shield-halved text-amber-600 text-base shrink-0"></i>
                     <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ الأساسي (قبل الضريبة) <span class="text-red-500">*</span></label>
-                        <div class="relative">
-                            <input type="number" step="0.01" min="0.01" id="edit_exp_amount" name="amount" required oninput="calcEditExpenseTotal()" class="w-full text-lg font-black bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
-                            <span class="absolute left-3 top-2 font-bold text-slate-400 text-xs" id="edit_exp_currency_label"><?= $projCurrency ?></span>
+                        <strong class="font-bold">نظام الرقابة والتدقيق (Equals) نشط:</strong>
+                        <span class="text-slate-600 text-[11px] mr-1">سيتم توثيق كل إجراء وتعديل في سجل النظام تلقائياً مع تحديث رصيد الخزنة.</span>
+                    </div>
+                </div>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 border border-amber-300 shrink-0">توثيق Equals</span>
+            </div>
+
+            <!-- Horizontal Split Grid: Right Side (Details) & Left Side (Invoices) -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                
+                <!-- Right Side: Financial & Beneficiary Information (lg:col-span-7) -->
+                <div class="lg:col-span-7 space-y-3.5">
+                    <!-- Title & Category -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">بيان وسبب الصرف <span class="text-red-500">*</span></label>
+                            <input type="text" name="title" id="edit_exp_title" required placeholder="مثال: سباكة، كهرباء، أسمنت..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
                         </div>
-                    </div>
-                    <div>
-                        <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ الصرف</label>
-                        <input type="date" name="expense_date" id="edit_exp_date" required class="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                    </div>
-                </div>
-
-                <!-- VAT checkbox & live total preview -->
-                <div class="flex items-center justify-between p-2.5 bg-white rounded-xl border border-slate-200">
-                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
-                        <input type="checkbox" id="edit_exp_apply_vat" name="apply_vat" value="1" onchange="calcEditExpenseTotal()" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
-                        <span class="text-xs font-bold text-slate-800">تطبيق ضريبة القيمة المضافة (15% VAT)</span>
-                    </label>
-                    <span id="edit_exp_vat_preview" class="text-xs font-mono font-bold text-slate-400">+ 0.00</span>
-                </div>
-
-                <div class="flex items-center justify-between pt-1 border-t border-slate-200 text-xs">
-                    <span class="font-bold text-slate-600">المجموع النهائي بعد التعديل:</span>
-                    <strong id="edit_exp_total_preview" class="text-base font-black text-rose-600 font-mono">0.00 <?= $projCurrency ?></strong>
-                </div>
-            </div>
-
-            <!-- Beneficiary info -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">اسم المستفيد</label>
-                    <input type="text" name="beneficiary_name" id="edit_exp_bname" placeholder="اسم المورد أو الفني" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم الهوية / السجل</label>
-                    <input type="text" name="beneficiary_id_number" id="edit_exp_bid" placeholder="رقم الهوية" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">رقم الجوال</label>
-                    <input type="text" name="beneficiary_phone" id="edit_exp_bphone" placeholder="05XXXXXXXX" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                </div>
-            </div>
-
-            <!-- Payment method & Reason for edit -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                    <label class="block text-xs font-bold text-slate-700 mb-1">طريقة الخصم</label>
-                    <select name="payment_method" id="edit_exp_pmethod" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
-                        <option value="نقدي">نقدي</option>
-                        <option value="كاش">كاش</option>
-                        <option value="تحويل بنكي">تحويل بنكي</option>
-                    </select>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-amber-800 mb-1">سبب التعديل (لتوثيقه في سجل Equals) <span class="text-amber-600">*</span></label>
-                    <input type="text" name="edit_reason" id="edit_exp_reason" required placeholder="مثلاً: تصحيح خطأ بالمبلغ، تحديث المورد..." class="w-full bg-amber-50/50 border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                </div>
-            </div>
-
-            <!-- Description / Notes -->
-            <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1">ملاحظات وتفاصيل إضافية</label>
-                <textarea name="description" id="edit_exp_desc" rows="2" placeholder="أي تفاصيل أو ملاحظات تخص الفاتورة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
-            </div>
-
-            <!-- Attachments Management: View Existing, Delete, and Add More (Append) -->
-            <div class="border border-slate-200 rounded-2xl p-3.5 bg-slate-50/70 space-y-3">
-                <div class="flex items-center justify-between border-b border-slate-200/80 pb-2">
-                    <label class="block text-xs font-bold text-slate-800 flex items-center">
-                        <i class="fa-solid fa-receipt text-indigo-600 ml-1.5"></i>
-                        فواتير ومستندات المصروف المرفقة
-                    </label>
-                    <span id="edit_exp_att_badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
-                        0 فواتير
-                    </span>
-                </div>
-
-                <!-- Hidden inputs for deleted attachments -->
-                <div id="edit_exp_deleted_inputs"></div>
-
-                <!-- Existing Invoices List -->
-                <div>
-                    <span class="text-[11px] font-bold text-slate-600 block mb-1.5">
-                        <i class="fa-solid fa-folder-open text-amber-500 ml-1"></i>
-                        الفواتير المحفوظة حالياً (يمكنك حذف أي منها):
-                    </span>
-                    <div id="edit_exp_existing_list" class="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-0.5">
-                        <!-- Populated dynamically via JS -->
-                    </div>
-                    <div id="edit_exp_no_existing" class="text-[11px] text-slate-400 italic py-2 text-center bg-white rounded-xl border border-dashed border-slate-200 hidden">
-                        لا توجد أي فواتير مرفقة مسجلة لهذا المصروف حالياً.
-                    </div>
-                </div>
-
-                <!-- Add New Invoices Section (Append without replacing) -->
-                <div class="pt-2 border-t border-slate-200/80">
-                    <span class="text-[11px] font-bold text-slate-700 block mb-1.5">
-                        <i class="fa-solid fa-circle-plus text-emerald-600 ml-1"></i>
-                        إضافة فواتير جديدة (تُضاف مع الفواتير السابقة دون استبدالها):
-                    </span>
-                    <div id="edit_exp_dropzone" onclick="document.getElementById('edit_exp_new_files_input').click()" class="border-2 border-dashed border-blue-200 hover:border-blue-400 bg-white rounded-xl p-3.5 text-center cursor-pointer transition hover:bg-blue-50/30">
-                        <input type="file" id="edit_exp_new_files_input" name="invoice_files[]" multiple accept="image/*,.pdf" class="hidden">
-                        <div class="flex flex-col items-center justify-center pointer-events-none">
-                            <i class="fa-solid fa-cloud-arrow-up text-blue-500 text-2xl mb-1"></i>
-                            <p class="text-xs font-bold text-slate-700">اضغط هنا لاختيار فواتير جديدة أو اسحبها وأفلتها</p>
-                            <p class="text-[10px] text-slate-400 mt-0.5">يمكنك رفع عدة فواتير بصيغ (JPG, PNG, PDF)</p>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">التصنيف / البند</label>
+                            <select name="category_id" id="edit_exp_category_id" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                <option value="">مصروف عام (بدون تصنيف)</option>
+                                <?php foreach ($allCategoriesList as $cat): ?>
+                                    <option value="<?= $cat['id'] ?>"><?= htmlspecialchars($cat['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
                         </div>
                     </div>
 
-                    <!-- Selected New Files Preview List -->
-                    <div id="edit_exp_new_preview" class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2 hidden max-h-36 overflow-y-auto p-0.5">
-                        <!-- New files selected appear here with preview & remove button -->
+                    <!-- Amount & VAT calculation -->
+                    <div class="p-3 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">المبلغ الأساسي (قبل الضريبة) <span class="text-red-500">*</span></label>
+                                <div class="relative">
+                                    <input type="number" step="0.01" min="0.01" id="edit_exp_amount" name="amount" required oninput="calcEditExpenseTotal()" class="w-full text-base font-black bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-blue-700 focus:ring-2 focus:ring-blue-500 focus:outline-none font-mono">
+                                    <span class="absolute left-3 top-2 font-bold text-slate-400 text-xs" id="edit_exp_currency_label"><?= $projCurrency ?></span>
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ الصرف</label>
+                                <input type="date" name="expense_date" id="edit_exp_date" required class="w-full bg-white border border-slate-300 rounded-xl px-3 py-1.5 text-xs font-bold focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                            </div>
+                        </div>
+
+                        <!-- VAT checkbox & live total preview -->
+                        <div class="flex items-center justify-between p-2 bg-white rounded-xl border border-slate-200">
+                            <label class="flex items-center space-x-2 space-x-reverse cursor-pointer">
+                                <input type="checkbox" id="edit_exp_apply_vat" name="apply_vat" value="1" onchange="calcEditExpenseTotal()" class="rounded text-blue-600 focus:ring-blue-500 w-4 h-4">
+                                <span class="text-xs font-bold text-slate-800">تطبيق ضريبة القيمة المضافة (15% VAT)</span>
+                            </label>
+                            <span id="edit_exp_vat_preview" class="text-xs font-mono font-bold text-slate-400">+ 0.00</span>
+                        </div>
+
+                        <div class="flex items-center justify-between pt-1 border-t border-slate-200 text-xs">
+                            <span class="font-bold text-slate-600">المجموع النهائي بعد التعديل:</span>
+                            <strong id="edit_exp_total_preview" class="text-base font-black text-rose-600 font-mono">0.00 <?= $projCurrency ?></strong>
+                        </div>
+                    </div>
+
+                    <!-- Beneficiary info -->
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">اسم المستفيد</label>
+                            <input type="text" name="beneficiary_name" id="edit_exp_bname" placeholder="اسم المورد أو الفني" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">رقم الهوية / السجل</label>
+                            <input type="text" name="beneficiary_id_number" id="edit_exp_bid" placeholder="رقم الهوية" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">رقم الجوال</label>
+                            <input type="text" name="beneficiary_phone" id="edit_exp_bphone" placeholder="05XXXXXXXX" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-1.5 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <!-- Payment method & Reason for edit -->
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">طريقة الخصم</label>
+                            <select name="payment_method" id="edit_exp_pmethod" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-2.5 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                <option value="نقدي">نقدي</option>
+                                <option value="كاش">كاش</option>
+                                <option value="تحويل بنكي">تحويل بنكي</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-amber-800 mb-1">سبب التعديل (في Equals) <span class="text-amber-600">*</span></label>
+                            <input type="text" name="edit_reason" id="edit_exp_reason" required placeholder="مثلاً: تصحيح المبلغ..." class="w-full bg-amber-50/50 border border-amber-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <!-- Description / Notes -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">ملاحظات وتفاصيل إضافية</label>
+                        <textarea name="description" id="edit_exp_desc" rows="2" placeholder="أي تفاصيل أو ملاحظات تخص الفاتورة..." class="w-full bg-slate-50 border border-slate-300 rounded-xl p-2.5 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
                     </div>
                 </div>
+
+                <!-- Left Side: Invoices & Attachments Management (lg:col-span-5) -->
+                <div class="lg:col-span-5 border border-slate-200 rounded-2xl p-4 bg-slate-50/70 space-y-3.5">
+                    <div class="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                        <label class="block text-xs font-bold text-slate-800 flex items-center">
+                            <i class="fa-solid fa-receipt text-indigo-600 ml-1.5"></i>
+                            فواتير ومستندات المصروف
+                        </label>
+                        <span id="edit_exp_att_badge" class="px-2.5 py-0.5 rounded-full text-[10px] font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
+                            0 فواتير
+                        </span>
+                    </div>
+
+                    <!-- Hidden inputs for deleted attachments -->
+                    <div id="edit_exp_deleted_inputs"></div>
+
+                    <!-- Existing Invoices List -->
+                    <div>
+                        <span class="text-[11px] font-bold text-slate-600 block mb-1.5">
+                            <i class="fa-solid fa-folder-open text-amber-500 ml-1"></i>
+                            الفواتير المحفوظة (يمكنك حذف أي منها):
+                        </span>
+                        <div id="edit_exp_existing_list" class="space-y-2 max-h-52 overflow-y-auto pr-0.5">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                        <div id="edit_exp_no_existing" class="text-[11px] text-slate-400 italic py-2 text-center bg-white rounded-xl border border-dashed border-slate-200 hidden">
+                            لا توجد أي فواتير مرفقة مسجلة لهذا المصروف حالياً.
+                        </div>
+                    </div>
+
+                    <!-- Add New Invoices Section (Append without replacing) -->
+                    <div class="pt-2 border-t border-slate-200/80">
+                        <span class="text-[11px] font-bold text-slate-700 block mb-1.5">
+                            <i class="fa-solid fa-circle-plus text-emerald-600 ml-1"></i>
+                            إضافة فواتير جديدة (دون استبدال القديمة):
+                        </span>
+                        <div id="edit_exp_dropzone" onclick="document.getElementById('edit_exp_new_files_input').click()" class="border-2 border-dashed border-blue-200 hover:border-blue-400 bg-white rounded-xl p-3.5 text-center cursor-pointer transition hover:bg-blue-50/30">
+                            <input type="file" id="edit_exp_new_files_input" name="invoice_files[]" multiple accept="image/*,.pdf" class="hidden">
+                            <div class="flex flex-col items-center justify-center pointer-events-none">
+                                <i class="fa-solid fa-cloud-arrow-up text-blue-500 text-2xl mb-1"></i>
+                                <p class="text-xs font-bold text-slate-700">اضغط لاختيار فواتير جديدة أو اسحبها هنا</p>
+                                <p class="text-[10px] text-slate-400 mt-0.5">عدة صور (JPG, PNG) أو ملفات PDF</p>
+                            </div>
+                        </div>
+
+                        <!-- Selected New Files Preview List -->
+                        <div id="edit_exp_new_preview" class="space-y-1.5 mt-2 hidden max-h-36 overflow-y-auto pr-0.5">
+                            <!-- New files selected appear here with preview & remove button -->
+                        </div>
+                    </div>
+                </div>
+
             </div>
 
-            <!-- Action buttons -->
-            <div class="flex items-center space-x-2 space-x-reverse pt-2">
-                <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-xs sm:text-sm flex items-center justify-center">
-                    <i class="fa-solid fa-floppy-disk ml-1.5"></i> حفظ التعديلات والتحديث المالي
+            <!-- Action buttons (Bottom) -->
+            <div class="flex items-center space-x-2 space-x-reverse pt-3 border-t border-slate-100">
+                <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition text-xs sm:text-sm flex items-center justify-center">
+                    <i class="fa-solid fa-floppy-disk ml-2"></i> حفظ التعديلات والتحديث المالي
                 </button>
-                <button type="button" onclick="closeEditExpenseModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-xs sm:text-sm">
+                <button type="button" onclick="closeEditExpenseModal()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-5 rounded-xl transition text-xs sm:text-sm">
                     إلغاء
                 </button>
             </div>
