@@ -1,0 +1,51 @@
+#!/usr/bin/env php
+<?php
+/**
+ * Artisan CLI Runner for Finens SaaS
+ * Provides 100% compatibility with Laravel Task Scheduler Cron command:
+ * * * * * * php /path-to-project/artisan schedule:run
+ */
+
+define('LARAVEL_START', microtime(true));
+
+require_once __DIR__ . '/config/app.php';
+require_once __DIR__ . '/includes/social/SocialScheduler.php';
+
+$command = $argv[1] ?? 'list';
+
+echo "Finens SaaS CLI / Artisan Environment (v" . APP_VERSION . ")\n";
+
+switch ($command) {
+    case 'schedule:run':
+    case 'social:publish':
+        echo "[" . date('Y-m-d H:i:s') . "] Running scheduled tasks...\n";
+        $scheduler = new SocialScheduler();
+        $res = $scheduler->run();
+        echo "[" . date('Y-m-d H:i:s') . "] Status: " . $res['status'] . "\n";
+        echo "Processed " . ($res['posts_processed'] ?? 0) . " posts (" . ($res['posts_succeeded'] ?? 0) . " succeeded, " . ($res['posts_failed'] ?? 0) . " failed) in " . ($res['duration'] ?? 0) . "s.\n";
+        break;
+
+    case 'migrate':
+        echo "Checking database tables and applying migrations...\n";
+        ensureDatabaseTablesExist();
+        echo "Database tables up to date.\n";
+        break;
+
+    case 'social:stats':
+        $db = getDBConnection();
+        $stmt = $db->query("SELECT status, count(*) FROM social_posts GROUP BY status");
+        echo "Social Posts Summary:\n";
+        foreach ($stmt->fetchAll(PDO::FETCH_KEY_PAIR) as $status => $cnt) {
+            echo " - {$status}: {$cnt}\n";
+        }
+        break;
+
+    case 'list':
+    default:
+        echo "Available commands:\n";
+        echo "  schedule:run      Run scheduled tasks (Cron Job worker)\n";
+        echo "  social:publish    Execute social media scheduled publishing batch\n";
+        echo "  social:stats      Show summary of social media posts\n";
+        echo "  migrate           Run database migrations\n";
+        break;
+}

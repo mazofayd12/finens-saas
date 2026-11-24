@@ -145,6 +145,39 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                 </a>
             <?php endif; ?>
 
+            <!-- SOCIAL MEDIA MODULE -->
+            <?php if (hasModule('social_media') && canUser('social_media')): ?>
+                <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-purple-400 mt-5 mb-2 flex items-center">
+                    <i class="fa-solid fa-share-nodes ml-1.5 text-xs"></i>
+                    <span>إدارة السوشيال ميديا</span>
+                </p>
+
+                <a href="social_dashboard.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['social_dashboard.php', 'social_media.php']) ? 'bg-purple-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-chart-pie w-6 text-center ml-2.5 <?= in_array($currentPage, ['social_dashboard.php', 'social_media.php']) ? 'text-white' : 'text-purple-400' ?>"></i>
+                    <span>لوحة السوشيال ميديا</span>
+                </a>
+
+                <a href="social_accounts.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'social_accounts.php' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-link w-6 text-center ml-2.5 <?= $currentPage === 'social_accounts.php' ? 'text-white' : 'text-indigo-400' ?>"></i>
+                    <span>الحسابات المتصلة</span>
+                </a>
+
+                <a href="social_post_create.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'social_post_create.php' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-pen-to-square w-6 text-center ml-2.5 <?= $currentPage === 'social_post_create.php' ? 'text-white' : 'text-pink-400' ?>"></i>
+                    <span>إنشاء وجدولة منشور</span>
+                </a>
+
+                <a href="social_calendar.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'social_calendar.php' ? 'bg-purple-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-calendar-days w-6 text-center ml-2.5 <?= $currentPage === 'social_calendar.php' ? 'text-white' : 'text-blue-400' ?>"></i>
+                    <span>تقويم المحتوى</span>
+                </a>
+
+                <a href="social_posts.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= in_array($currentPage, ['social_posts.php', 'social_drafts.php', 'social_history.php', 'social_settings.php']) ? 'bg-purple-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-newspaper w-6 text-center ml-2.5 <?= in_array($currentPage, ['social_posts.php', 'social_drafts.php', 'social_history.php', 'social_settings.php']) ? 'text-white' : 'text-emerald-400' ?>"></i>
+                    <span>المنشورات والعمليات</span>
+                </a>
+            <?php endif; ?>
+
             <?php if (isCompanyAdmin()): ?>
                 <p class="px-3 text-[11px] font-bold uppercase tracking-wider text-slate-500 mt-5 mb-2">إدارة الشركة</p>
                 <?php if (canUser('settings')): ?>
@@ -287,6 +320,26 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                     </a>
                     <a href="payroll.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'payroll.php' ? 'bg-brand-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                         <i class="fa-solid fa-money-check-dollar ml-3 w-5 text-center text-teal-400"></i> مسيرات الرواتب
+                    </a>
+                <?php endif; ?>
+                <?php if (hasModule('social_media') && canUser('social_media')): ?>
+                    <p class="px-3 text-[10px] font-bold uppercase tracking-wider text-purple-400 mt-4 mb-1 flex items-center">
+                        <i class="fa-solid fa-share-nodes ml-1.5 text-xs"></i> إدارة السوشيال ميديا
+                    </p>
+                    <a href="social_dashboard.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['social_dashboard.php', 'social_media.php']) ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-chart-pie ml-3 w-5 text-center text-purple-400"></i> لوحة السوشيال ميديا
+                    </a>
+                    <a href="social_accounts.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'social_accounts.php' ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-link ml-3 w-5 text-center text-indigo-400"></i> الحسابات المتصلة
+                    </a>
+                    <a href="social_post_create.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'social_post_create.php' ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-pen-to-square ml-3 w-5 text-center text-pink-400"></i> إنشاء وجدولة منشور
+                    </a>
+                    <a href="social_calendar.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'social_calendar.php' ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-calendar-days ml-3 w-5 text-center text-blue-400"></i> تقويم المحتوى
+                    </a>
+                    <a href="social_posts.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['social_posts.php', 'social_drafts.php', 'social_history.php', 'social_settings.php']) ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-newspaper ml-3 w-5 text-center text-emerald-400"></i> المنشورات والعمليات
                     </a>
                 <?php endif; ?>
                 <?php if (isCompanyAdmin()): ?>

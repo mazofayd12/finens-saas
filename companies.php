@@ -47,6 +47,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $modHr = isset($_POST['module_hr']) ? 1 : 0;
         $modReports = isset($_POST['module_reports']) ? 1 : 0;
         $modProjects = isset($_POST['module_projects']) ? 1 : 0;
+        $modSocial = isset($_POST['module_social_media']) ? 1 : 0;
 
         // Admin account info
         $adminName = trim($_POST['admin_name'] ?? '');
@@ -74,8 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     try {
                         // 1. Insert Company
                         $insCo = $db->prepare("
-                            INSERT INTO companies (name, code, phone, currency, is_active, module_treasury, module_expenses, module_hr, module_reports, module_projects, created_at)
-                            VALUES (:name, :code, :phone, :cur, 1, :mt, :me, :mhr, :mr, :mp, :now)
+                            INSERT INTO companies (name, code, phone, currency, is_active, module_treasury, module_expenses, module_hr, module_reports, module_projects, module_social_media, created_at)
+                            VALUES (:name, :code, :phone, :cur, 1, :mt, :me, :mhr, :mr, :mp, :msoc, :now)
                         ");
                         $insCo->execute([
                             ':name' => $name,
@@ -87,6 +88,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             ':mhr' => $modHr,
                             ':mr' => $modReports,
                             ':mp' => $modProjects,
+                            ':msoc' => $modSocial,
                             ':now' => $now
                         ]);
                         $companyId = (int)$db->lastInsertId();
@@ -167,6 +169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $modHr = isset($_POST['module_hr']) ? 1 : 0;
         $modReports = isset($_POST['module_reports']) ? 1 : 0;
         $modProjects = isset($_POST['module_projects']) ? 1 : 0;
+        $modSocial = isset($_POST['module_social_media']) ? 1 : 0;
 
         if (empty($name)) {
             setFlash('error', 'اسم الشركة مطلوب');
@@ -175,7 +178,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 UPDATE companies 
                 SET name = :name, phone = :phone, currency = :cur, is_active = :act,
                     module_treasury = :mt, module_expenses = :me, module_hr = :mhr, module_reports = :mr,
-                    module_projects = :mp
+                    module_projects = :mp, module_social_media = :msoc
                 WHERE id = :id
             ");
             $upd->execute([
@@ -188,6 +191,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ':mhr' => $modHr,
                 ':mr' => $modReports,
                 ':mp' => $modProjects,
+                ':msoc' => $modSocial,
                 ':id' => $id
             ]);
             setFlash('success', 'تم تحديث بيانات الشركة والموديولات بنجاح.');
@@ -276,6 +280,9 @@ require_once __DIR__ . '/includes/header.php';
                                     </span>
                                     <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= (int)($comp['module_projects'] ?? 0) === 1 ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-400 line-through' ?>">
                                         <i class="fa-solid fa-helmet-safety ml-0.5 text-[9px]"></i> المشاريع والعقارات
+                                    </span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold <?= (int)($comp['module_social_media'] ?? 1) === 1 ? 'bg-purple-100 text-purple-800 border border-purple-200' : 'bg-slate-100 text-slate-400 line-through' ?>">
+                                        <i class="fa-solid fa-share-nodes ml-0.5 text-[9px]"></i> السوشيال ميديا
                                     </span>
                                 </div>
                             </td>
@@ -390,6 +397,10 @@ require_once __DIR__ . '/includes/header.php';
                         <input type="checkbox" name="module_projects" value="1" class="rounded text-amber-600 focus:ring-amber-500 w-4 h-4">
                         <span class="font-black text-amber-900">🏗️ موديول شركات التطوير العقاري والمشاريع (Real Estate & Multi-Safes)</span>
                     </label>
+                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer col-span-2 p-2 bg-purple-50 rounded-xl border border-purple-200">
+                        <input type="checkbox" name="module_social_media" value="1" checked class="rounded text-purple-600 focus:ring-purple-500 w-4 h-4">
+                        <span class="font-black text-purple-900">📱 موديول إدارة السوشيال ميديا والتسويق (Social Media Management)</span>
+                    </label>
                 </div>
             </div>
 
@@ -480,6 +491,10 @@ require_once __DIR__ . '/includes/header.php';
                         <input type="checkbox" id="edit_mod_projects" name="module_projects" value="1" class="rounded text-amber-600 focus:ring-amber-500 w-4 h-4">
                         <span class="font-black text-amber-900">🏗️ موديول شركات التطوير العقاري والمشاريع (Real Estate & Multi-Safes)</span>
                     </label>
+                    <label class="flex items-center space-x-2 space-x-reverse cursor-pointer col-span-2 p-2 bg-purple-50 rounded-xl border border-purple-200">
+                        <input type="checkbox" id="edit_mod_social_media" name="module_social_media" value="1" class="rounded text-purple-600 focus:ring-purple-500 w-4 h-4">
+                        <span class="font-black text-purple-900">📱 موديول إدارة السوشيال ميديا والتسويق (Social Media Management)</span>
+                    </label>
                 </div>
             </div>
 
@@ -511,6 +526,7 @@ function editCompany(comp) {
     document.getElementById('edit_mod_hr').checked = parseInt(comp.module_hr) === 1;
     document.getElementById('edit_mod_reports').checked = parseInt(comp.module_reports) === 1;
     document.getElementById('edit_mod_projects').checked = parseInt(comp.module_projects || 0) === 1;
+    document.getElementById('edit_mod_social_media').checked = parseInt(comp.module_social_media !== undefined ? comp.module_social_media : 1) === 1;
     document.getElementById('edit_is_active').checked = parseInt(comp.is_active) === 1;
     openModal('edit-company-modal');
 }

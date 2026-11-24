@@ -68,7 +68,7 @@ function getCurrentUser(bool $fresh = false): ?array {
     $stmt = $db->prepare("
         SELECT u.*, c.name as company_name, c.code as company_code, c.currency,
                c.module_treasury, c.module_expenses, c.module_hr, c.module_reports,
-               c.module_projects, c.tax_number, c.cr_number, c.address,
+               c.module_projects, c.module_social_media, c.tax_number, c.cr_number, c.address,
                c.phone as company_phone, c.logo as company_logo,
                c.signature as company_signature, c.stamp as company_stamp,
                c.email as company_email, c.location_url as company_location_url,
@@ -102,6 +102,7 @@ function getCurrentUser(bool $fresh = false): ?array {
             $user['module_hr'] = $activeComp['module_hr'];
             $user['module_reports'] = $activeComp['module_reports'];
             $user['module_projects'] = $activeComp['module_projects'] ?? 0;
+            $user['module_social_media'] = $activeComp['module_social_media'] ?? 1;
             $user['tax_number'] = $activeComp['tax_number'] ?? '';
             $user['cr_number'] = $activeComp['cr_number'] ?? '';
             $user['address'] = $activeComp['address'] ?? '';
@@ -193,7 +194,8 @@ function getDefaultPermissions(string $role = 'data_entry'): array {
             'treasury' => true,
             'reports' => true,
             'settings' => true,
-            'users' => true
+            'users' => true,
+            'social_media' => true
         ];
     } elseif ($role === 'view_only') {
         return [
@@ -207,7 +209,8 @@ function getDefaultPermissions(string $role = 'data_entry'): array {
             'treasury' => true,
             'reports' => true,
             'settings' => false,
-            'users' => false
+            'users' => false,
+            'social_media' => true
         ];
     } elseif ($role === 'invoicing') {
         return [
@@ -221,7 +224,8 @@ function getDefaultPermissions(string $role = 'data_entry'): array {
             'treasury' => false,
             'reports' => false,
             'settings' => false,
-            'users' => false
+            'users' => false,
+            'social_media' => false
         ];
     } elseif ($role === 'projects') {
         return [
@@ -235,7 +239,8 @@ function getDefaultPermissions(string $role = 'data_entry'): array {
             'treasury' => false,
             'reports' => false,
             'settings' => false,
-            'users' => false
+            'users' => false,
+            'social_media' => false
         ];
     } else {
         return [
@@ -249,7 +254,8 @@ function getDefaultPermissions(string $role = 'data_entry'): array {
             'treasury' => true,
             'reports' => false,
             'settings' => false,
-            'users' => false
+            'users' => false,
+            'social_media' => true
         ];
     }
 }

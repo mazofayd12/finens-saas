@@ -269,6 +269,10 @@ function ensureDatabaseTablesExist(): void {
         if (!in_array('address', $cols)) {
             $db->exec("ALTER TABLE companies ADD COLUMN address TEXT NULL;");
         }
+        if (!in_array('module_social_media', $cols)) {
+            $db->exec("ALTER TABLE companies ADD COLUMN module_social_media INTEGER DEFAULT 1;");
+            $db->exec("UPDATE companies SET module_social_media = 1 WHERE module_social_media IS NULL;");
+        }
     } catch (Exception $e) {
         // In case of MySQL or if already added
     }
@@ -572,6 +576,141 @@ function ensureDatabaseTablesExist(): void {
             total_amount DECIMAL(15,2) DEFAULT 0,
             FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
         )
+    ");
+
+    // ==========================================
+    // SOCIAL MEDIA MANAGEMENT MODULE TABLES
+    // (Multi-Tenant SaaS - Complete Isolation)
+    // ==========================================
+
+    // 1. Connected Social Accounts
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_accounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            platform VARCHAR(50) NOT NULL, -- 'facebook', 'instagram', 'tiktok', 'snapchat'
+            account_id VARCHAR(150) NOT NULL, -- External ID (Page ID, IG User ID, TikTok open_id, etc.)
+            account_name VARCHAR(255) NOT NULL,
+            account_username VARCHAR(150) NULL,
+            avatar_url TEXT NULL,
+            access_token TEXT NOT NULL, -- AES-256 Encrypted at rest
+            refresh_token TEXT NULL,    -- AES-256 Encrypted at rest
+            token_expires_at DATETIME NULL,
+            status VARCHAR(50) DEFAULT 'active', -- 'active', 'disconnected', 'expired', 'error'
+            error_details TEXT NULL,
+            metadata TEXT NULL, -- JSON extra data (permissions, page category, followers, etc.)
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_sa_tenant ON social_accounts(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_sa_tenant_platform ON social_accounts(tenant_id, platform);
+        CREATE INDEX IF NOT EXISTS idx_sa_status ON social_accounts(status);
+    ");
+
+    // 2. Social Posts (Drafts, Scheduled, Published)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_posts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            caption TEXT NOT NULL,
+            platform_captions TEXT NULL, -- JSON custom caption overrides per platform
+            status VARCHAR(50) DEFAULT 'draft', -- 'draft', 'scheduled', 'processing', 'published', 'partially_published', 'failed', 'cancelled'
+            scheduled_at DATETIME NULL,
+            published_at DATETIME NULL,
+            timezone VARCHAR(50) DEFAULT 'UTC',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_sp_tenant ON social_posts(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_sp_status ON social_posts(status);
+        CREATE INDEX IF NOT EXISTS idx_sp_scheduled ON social_posts(status, scheduled_at);
+        CREATE INDEX IF NOT EXISTS idx_sp_created ON social_posts(created_at);
+    ");
+
+    // 3. Social Post Target Platforms (Per-account publishing status & external IDs)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_post_platforms (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            post_id INTEGER NOT NULL,
+            tenant_id INTEGER NOT NULL,
+            social_account_id INTEGER NOT NULL,
+            platform VARCHAR(50) NOT NULL,
+            status VARCHAR(50) DEFAULT 'pending', -- 'pending', 'processing', 'published', 'failed', 'cancelled'
+            external_post_id VARCHAR(255) NULL,
+            external_post_url TEXT NULL,
+            error_message TEXT NULL,
+            retry_count INTEGER DEFAULT 0,
+            last_attempt_at DATETIME NULL,
+            published_at DATETIME NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE CASCADE,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (social_account_id) REFERENCES social_accounts(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_spp_post ON social_post_platforms(post_id);
+        CREATE INDEX IF NOT EXISTS idx_spp_tenant_platform ON social_post_platforms(tenant_id, platform);
+        CREATE INDEX IF NOT EXISTS idx_spp_status ON social_post_platforms(status);
+    ");
+
+    // 4. Social Media Files (Uploaded images and videos)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_media_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            post_id INTEGER NULL,
+            file_path VARCHAR(255) NOT NULL,
+            file_type VARCHAR(20) DEFAULT 'image', -- 'image' or 'video'
+            file_name VARCHAR(255) NOT NULL,
+            file_size INTEGER DEFAULT 0,
+            mime_type VARCHAR(100) NULL,
+            dimensions VARCHAR(50) NULL,
+            duration DECIMAL(10,2) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE,
+            FOREIGN KEY (post_id) REFERENCES social_posts(id) ON DELETE SET NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_smf_tenant ON social_media_files(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_smf_post ON social_media_files(post_id);
+    ");
+
+    // 5. Social Publishing & Audit Logs
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_publish_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            post_id INTEGER NULL,
+            social_account_id INTEGER NULL,
+            platform VARCHAR(50) NOT NULL,
+            action VARCHAR(100) NOT NULL, -- 'publish_attempt', 'publish_success', 'publish_failure', 'token_refresh', 'cron_batch', 'disconnect'
+            status_code INTEGER NULL,
+            response_payload TEXT NULL, -- Sanitized API payload (secrets redacted)
+            error_message TEXT NULL,
+            ip_address VARCHAR(45) NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_spl_tenant ON social_publish_logs(tenant_id);
+        CREATE INDEX IF NOT EXISTS idx_spl_post ON social_publish_logs(post_id);
+        CREATE INDEX IF NOT EXISTS idx_spl_created ON social_publish_logs(created_at);
+    ");
+
+    // 6. Social Settings (API credentials and cron state)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS social_settings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NULL, -- NULL for global default credentials, or specific tenant override
+            setting_key VARCHAR(100) NOT NULL,
+            setting_value TEXT NULL,
+            is_secret INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_ss_tenant_key ON social_settings(tenant_id, setting_key);
     ");
 
     // Seed data if no users exist

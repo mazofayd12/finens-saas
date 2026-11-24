@@ -4,3 +4,4 @@ deploy.tar.gz
 database.sqlite
 scratch/
 uploads/
+*.lock
