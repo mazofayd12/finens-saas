@@ -489,9 +489,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $attachedText = !empty($summaryParts) ? ' تم إرفاق ' . implode(' و ', $summaryParts) . ' بنجاح.' : '.';
 
             setFlash('success', "تم حفظ التقرير الميداني بنجاح!{$attachedText}");
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'redirect' => "project_view.php?id={$projectId}&tab=tab-reports"]);
+                exit;
+            }
             header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
             exit;
         } catch (Exception $e) {
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'حدث خطأ أثناء حفظ التقرير: ' . $e->getMessage()]);
+                exit;
+            }
             setFlash('error', 'حدث خطأ أثناء حفظ التقرير: ' . $e->getMessage());
             header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
             exit;
@@ -525,6 +535,200 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlash('success', 'تم حذف التقرير الميداني بنجاح.');
         } else {
             setFlash('error', 'التقرير غير موجود أو لا تملك صلاحية حذفه.');
+        }
+        header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
+        exit;
+    }
+    elseif ($action === 'edit_daily_report') {
+        $reportId = (int)($_POST['report_id'] ?? 0);
+        $stmt = $db->prepare("SELECT * FROM project_daily_reports WHERE id = :id AND project_id = :pid AND company_id = :cid");
+        $stmt->execute([':id' => $reportId, ':pid' => $projectId, ':cid' => $activeCompanyId]);
+        $report = $stmt->fetch();
+
+        if (!$report) {
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'التقرير غير موجود أو لا تملك صلاحية تعديله.']);
+                exit;
+            }
+            setFlash('error', 'التقرير غير موجود أو لا تملك صلاحية تعديله.');
+            header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
+            exit;
+        }
+
+        $reportDate = trim($_POST['report_date'] ?? $report['report_date']);
+        $periodRange = trim($_POST['period_range'] ?? '');
+        $title = trim($_POST['title'] ?? '');
+        $stage = trim($_POST['stage'] ?? '');
+        $completionPct = max(0, min(100, (int)($_POST['completion_percentage'] ?? 0)));
+        $description = trim($_POST['description'] ?? '');
+        $videoUrl = trim($_POST['video_url'] ?? '');
+
+        if (empty($title)) {
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'عنوان التقرير مطلوب.']);
+                exit;
+            }
+            setFlash('error', 'عنوان التقرير مطلوب.');
+            header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
+            exit;
+        }
+
+        $uploadDir = APP_PATH . '/uploads/projects/reports/';
+        if (!is_dir($uploadDir)) {
+            mkdir($uploadDir, 0777, true);
+        }
+
+        try {
+            $currentVideoFile = $report['video_file'];
+
+            // 1. Delete requested existing media items
+            $deletedCount = 0;
+            $deleteMediaIds = $_POST['delete_media_ids'] ?? [];
+            if (is_array($deleteMediaIds) && !empty($deleteMediaIds)) {
+                $cleanIds = array_values(array_filter(array_map('intval', $deleteMediaIds), fn($v) => $v > 0));
+                if (!empty($cleanIds)) {
+                    $placeholders = implode(',', array_fill(0, count($cleanIds), '?'));
+                    $selDel = $db->prepare("SELECT id, file_path FROM project_report_media WHERE report_id = ? AND company_id = ? AND id IN ($placeholders)");
+                    $selDel->execute(array_merge([$reportId, $activeCompanyId], $cleanIds));
+                    $rowsToDelete = $selDel->fetchAll();
+
+                    foreach ($rowsToDelete as $row) {
+                        $fullPath = APP_PATH . '/' . $row['file_path'];
+                        if (!empty($row['file_path']) && file_exists($fullPath)) {
+                            @unlink($fullPath);
+                        }
+                        if ($currentVideoFile === $row['file_path']) {
+                            $currentVideoFile = null;
+                        }
+                        $deletedCount++;
+                    }
+
+                    $delStmt = $db->prepare("DELETE FROM project_report_media WHERE report_id = ? AND company_id = ? AND id IN ($placeholders)");
+                    $delStmt->execute(array_merge([$reportId, $activeCompanyId], $cleanIds));
+                }
+            }
+
+            // Delete legacy video_file if requested
+            if (!empty($_POST['delete_legacy_video']) && !empty($currentVideoFile)) {
+                $vfPath = APP_PATH . '/' . $currentVideoFile;
+                if (file_exists($vfPath)) {
+                    @unlink($vfPath);
+                }
+                $currentVideoFile = null;
+                $deletedCount++;
+            }
+
+            // 2. Append newly uploaded images & videos
+            $allowedImgExts = ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp'];
+            $allowedVidExts = ['mp4', 'webm', 'mov', 'm4v', 'mkv', 'avi'];
+            $addedImgCount = 0;
+            $addedVidCount = 0;
+
+            if (isset($_FILES['report_media']) && is_array($_FILES['report_media']['name'])) {
+                $countMedia = count($_FILES['report_media']['name']);
+                for ($i = 0; $i < $countMedia; $i++) {
+                    if ($_FILES['report_media']['error'][$i] === UPLOAD_ERR_OK) {
+                        $mTmp = $_FILES['report_media']['tmp_name'][$i];
+                        $mName = $_FILES['report_media']['name'][$i];
+                        $mExt = strtolower(pathinfo($mName, PATHINFO_EXTENSION));
+
+                        if (in_array($mExt, $allowedVidExts)) {
+                            $newVidName = 'vid_rep_' . $reportId . '_' . time() . '_' . rand(1000, 9999) . '.' . $mExt;
+                            if (move_uploaded_file($mTmp, $uploadDir . $newVidName)) {
+                                $relPath = 'uploads/projects/reports/' . $newVidName;
+                                if (empty($currentVideoFile)) {
+                                    $currentVideoFile = $relPath;
+                                }
+                                $db->prepare("
+                                    INSERT INTO project_report_media (
+                                        report_id, project_id, company_id, file_path, file_type, caption, created_at
+                                    ) VALUES (
+                                        :rid, :pid, :cid, :fpath, 'video', :cap, :now
+                                    )
+                                ")->execute([
+                                    ':rid' => $reportId,
+                                    ':pid' => $projectId,
+                                    ':cid' => $activeCompanyId,
+                                    ':fpath' => $relPath,
+                                    ':cap' => 'فيديو: ' . $title,
+                                    ':now' => date('Y-m-d H:i:s')
+                                ]);
+                                $addedVidCount++;
+                            }
+                        } elseif (in_array($mExt, $allowedImgExts)) {
+                            $newImgName = 'img_rep_' . $reportId . '_' . time() . '_' . rand(1000, 9999) . '.' . $mExt;
+                            if (move_uploaded_file($mTmp, $uploadDir . $newImgName)) {
+                                $relPath = 'uploads/projects/reports/' . $newImgName;
+                                $db->prepare("
+                                    INSERT INTO project_report_media (
+                                        report_id, project_id, company_id, file_path, file_type, caption, created_at
+                                    ) VALUES (
+                                        :rid, :pid, :cid, :fpath, 'image', :cap, :now
+                                    )
+                                ")->execute([
+                                    ':rid' => $reportId,
+                                    ':pid' => $projectId,
+                                    ':cid' => $activeCompanyId,
+                                    ':fpath' => $relPath,
+                                    ':cap' => $title,
+                                    ':now' => date('Y-m-d H:i:s')
+                                ]);
+                                $addedImgCount++;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Update main report record
+            $updRep = $db->prepare("
+                UPDATE project_daily_reports
+                SET report_date = :rdate,
+                    period_range = :prange,
+                    title = :title,
+                    stage = :stage,
+                    completion_percentage = :pct,
+                    description = :desc,
+                    video_url = :vurl,
+                    video_file = :vfile
+                WHERE id = :id AND project_id = :pid AND company_id = :cid
+            ");
+            $updRep->execute([
+                ':rdate' => $reportDate,
+                ':prange' => $periodRange,
+                ':title' => $title,
+                ':stage' => $stage,
+                ':pct' => $completionPct,
+                ':desc' => $description,
+                ':vurl' => $videoUrl ?: null,
+                ':vfile' => $currentVideoFile,
+                ':id' => $reportId,
+                ':pid' => $projectId,
+                ':cid' => $activeCompanyId
+            ]);
+
+            $msgParts = [];
+            if ($deletedCount > 0) $msgParts[] = "تم حذف ({$deletedCount}) مرفق";
+            if ($addedImgCount > 0) $msgParts[] = "إضافة ({$addedImgCount}) صور";
+            if ($addedVidCount > 0) $msgParts[] = "إضافة ({$addedVidCount}) فيديوهات";
+            $extraMsg = !empty($msgParts) ? ' (' . implode('، ', $msgParts) . ')' : '';
+
+            setFlash('success', "تم تعديل التقرير الميداني بنجاح!{$extraMsg}");
+
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => true, 'redirect' => "project_view.php?id={$projectId}&tab=tab-reports"]);
+                exit;
+            }
+        } catch (Exception $e) {
+            if (!empty($_POST['ajax_upload'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'حدث خطأ أثناء التعديل: ' . $e->getMessage()]);
+                exit;
+            }
+            setFlash('error', 'حدث خطأ أثناء التعديل: ' . $e->getMessage());
         }
         header('Location: project_view.php?id=' . $projectId . '&tab=tab-reports');
         exit;
@@ -2226,6 +2430,23 @@ require_once __DIR__ . '/includes/header.php';
                                     </div>
                                 </div>
 
+                                <!-- Edit Report & Attachments Action -->
+                                <button type="button" onclick='openEditDailyReportModal(<?= json_encode([
+                                    "id" => $rep["id"],
+                                    "report_date" => $rep["report_date"],
+                                    "period_range" => $rep["period_range"] ?? "",
+                                    "title" => $rep["title"] ?? "",
+                                    "stage" => $rep["stage"] ?? "",
+                                    "completion_percentage" => (int)$rep["completion_percentage"],
+                                    "description" => $rep["description"] ?? "",
+                                    "video_url" => $rep["video_url"] ?? "",
+                                    "video_file" => $rep["video_file"] ?? "",
+                                    "media" => array_values($repMedia)
+                                ], JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE) ?>)' class="inline-flex items-center gap-1 px-2.5 h-8 rounded-xl bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white border border-blue-200 transition text-xs font-bold" title="تعديل التقرير والمرفقات">
+                                    <i class="fa-solid fa-pen-to-square"></i>
+                                    <span class="hidden sm:inline">تعديل</span>
+                                </button>
+
                                 <!-- Delete Action -->
                                 <form action="project_view.php?id=<?= $projectId ?>" method="POST" onsubmit="return confirm('هل أنت متأكد من حذف هذا التقرير وكافة الصور والفيديوهات المرتبطة به نهائياً؟');">
                                     <?= getCSRFInput() ?>
@@ -2795,7 +3016,7 @@ require_once __DIR__ . '/includes/header.php';
             </button>
         </div>
 
-        <form action="project_view.php?id=<?= $projectId ?>" method="POST" enctype="multipart/form-data" class="space-y-4">
+        <form id="add_daily_report_form" action="project_view.php?id=<?= $projectId ?>" method="POST" enctype="multipart/form-data" onsubmit="return handleReportFormSubmit(event, 'add')" class="space-y-4">
             <?= getCSRFInput() ?>
             <input type="hidden" name="action" value="add_daily_report">
 
@@ -2979,13 +3200,187 @@ require_once __DIR__ . '/includes/header.php';
                 </div>
             </div>
 
+            <!-- Compression & Upload Progress Bar -->
+            <div id="add_report_progress_wrap" class="hidden p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl space-y-2">
+                <div class="flex items-center justify-between text-xs font-bold text-indigo-900">
+                    <span id="add_report_progress_label" class="flex items-center gap-1.5">
+                        <i class="fa-solid fa-spinner fa-spin text-indigo-600"></i>
+                        <span>جاري تجهيز وضغط الوسائط...</span>
+                    </span>
+                    <span id="add_report_progress_pct" class="font-mono">0%</span>
+                </div>
+                <div class="w-full bg-indigo-200/70 h-2.5 rounded-full overflow-hidden">
+                    <div id="add_report_progress_bar" class="h-full bg-indigo-600 rounded-full transition-all duration-200" style="width: 0%"></div>
+                </div>
+            </div>
+
             <!-- Submit Buttons -->
             <div class="flex items-center space-x-2 space-x-reverse pt-2">
-                <button type="submit" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm flex items-center justify-center">
+                <button type="submit" id="add_report_submit_btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl shadow-md transition text-sm flex items-center justify-center">
                     <i class="fa-solid fa-cloud-arrow-up ml-1.5"></i>
                     حفظ التقرير ورفع الوسائط
                 </button>
                 <button type="button" onclick="closeModal('add-daily-report-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-4 rounded-xl transition text-sm">
+                    إلغاء
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Modal: Edit Daily Progress Report & Media Attachments -->
+<div id="edit-daily-report-modal" class="modal-container fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 overflow-y-auto">
+    <div class="modal-backdrop fixed inset-0" onclick="closeModal('edit-daily-report-modal')"></div>
+    <div class="relative bg-white rounded-3xl shadow-2xl max-w-4xl xl:max-w-5xl w-full p-6 sm:p-7 modal-animate-enter z-10 border border-slate-100 max-h-[92vh] overflow-y-auto">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100 mb-5">
+            <div class="flex items-center space-x-2.5 space-x-reverse">
+                <div class="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-lg font-bold shadow-md shadow-blue-600/20">
+                    <i class="fa-solid fa-pen-to-square"></i>
+                </div>
+                <div>
+                    <h3 class="font-black text-slate-800 text-lg">تعديل التقرير الميداني والملفات المرفقة</h3>
+                    <p class="text-xs text-slate-500">يمكنك حذف صور أو فيديوهات حالية وإضافة ملفات جديدة مع ضغط الفيديو تلقائياً</p>
+                </div>
+            </div>
+            <button type="button" onclick="closeModal('edit-daily-report-modal')" class="text-slate-400 hover:text-slate-600 text-lg">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        </div>
+
+        <form id="edit_daily_report_form" action="project_view.php?id=<?= $projectId ?>" method="POST" enctype="multipart/form-data" onsubmit="return handleReportFormSubmit(event, 'edit')" class="space-y-4">
+            <?= getCSRFInput() ?>
+            <input type="hidden" name="action" value="edit_daily_report">
+            <input type="hidden" name="report_id" id="edit_rep_id" value="">
+            <input type="hidden" name="delete_legacy_video" id="edit_rep_delete_legacy_video" value="0">
+            <div id="edit_rep_deleted_media_inputs"></div>
+
+            <!-- Horizontal 2-Column Layout -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+                <!-- Right Column: Report Details (lg:col-span-6) -->
+                <div class="lg:col-span-6 space-y-3.5">
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">عنوان التقرير / المرحلة <span class="text-red-500">*</span></label>
+                        <input type="text" name="title" id="edit_rep_title" required class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">تاريخ التقرير <span class="text-red-500">*</span></label>
+                            <input type="date" name="report_date" id="edit_rep_date" required class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">فترة التقرير (من - إلى)</label>
+                            <input type="text" name="period_range" id="edit_rep_period" placeholder="مثال: من السبت للخميس" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">المرحلة الإنشائية</label>
+                            <input type="text" name="stage" id="edit_rep_stage" placeholder="عظم، سباكة، تشطيب..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-slate-700 mb-1">نسبة الإنجاز (%)</label>
+                            <input type="number" name="completion_percentage" id="edit_rep_pct" min="0" max="100" class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono font-bold focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">تفاصيل وملاحظات العمل</label>
+                        <textarea name="description" id="edit_rep_desc" rows="4" class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-xs focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none leading-relaxed"></textarea>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1">رابط فيديو خارجي (اختياري)</label>
+                        <input type="url" name="video_url" id="edit_rep_video_url" placeholder="https://..." class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:bg-white focus:ring-2 focus:ring-blue-500 focus:outline-none dir-ltr text-left">
+                    </div>
+                </div>
+
+                <!-- Left Column: Existing Media + Add New Drag & Drop (lg:col-span-6) -->
+                <div class="lg:col-span-6 bg-slate-50/80 border border-slate-200 rounded-2xl p-4 space-y-4">
+                    <!-- Existing Attached Media -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <span class="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                <i class="fa-solid fa-folder-open text-amber-500"></i>
+                                <span>الملفات المرفقة حالياً (يمكنك حذف أي منها):</span>
+                            </span>
+                            <span id="edit_rep_existing_count_badge" class="text-[10px] font-bold bg-white border border-slate-200 px-2 py-0.5 rounded-full text-slate-600">0</span>
+                        </div>
+                        <div id="edit_rep_existing_grid" class="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-52 overflow-y-auto p-0.5">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                        <div id="edit_rep_no_existing" class="hidden text-center py-4 bg-white rounded-xl border border-dashed border-slate-200 text-xs text-slate-400 italic">
+                            لا توجد صور أو فيديوهات مرفقة حالياً لهذا التقرير.
+                        </div>
+                    </div>
+
+                    <!-- Add New Media (Unified Drag & Drop with Auto-Compression) -->
+                    <div class="pt-3 border-t border-slate-200 space-y-2.5">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-black text-slate-800 flex items-center gap-1.5">
+                                <i class="fa-solid fa-circle-plus text-emerald-600"></i>
+                                <span>إضافة صور وفيديوهات جديدة (دون مسح القديمة):</span>
+                            </span>
+                            <span id="edit_rep_media_badge_summary" class="hidden text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-full"></span>
+                        </div>
+
+                        <div id="edit_report_dropzone"
+                             class="relative border-2 border-dashed border-indigo-300 hover:border-indigo-500 rounded-2xl p-4 text-center bg-white transition-all cursor-pointer group"
+                             onclick="document.getElementById('edit_rep_media_input').click()"
+                             ondragover="handleMediaDragOver(event, 'edit_report_dropzone')"
+                             ondragleave="handleMediaDragLeave(event, 'edit_report_dropzone')"
+                             ondrop="handleMediaDrop(event, 'edit')">
+                            <input type="file" id="edit_rep_media_input" multiple accept="image/*,video/*,.mp4,.mov,.webm,.mkv,.avi,.jpg,.jpeg,.png,.webp" onchange="handleMediaSelected(this.files, 'edit')" class="hidden">
+                            <div class="flex flex-col items-center justify-center space-y-1 pointer-events-none">
+                                <i class="fa-solid fa-cloud-arrow-up text-indigo-500 text-2xl"></i>
+                                <span class="text-xs font-black text-slate-800">اسحب وأفلت الصور والفيديوهات معاً هنا</span>
+                                <span class="text-[10px] text-slate-400">يتم ضغط الصور والفيديوهات تلقائياً لتخفيف الحجم وسرعة الرفع</span>
+                            </div>
+                        </div>
+
+                        <!-- New Videos Preview -->
+                        <div id="edit_rep_videos_section" class="hidden space-y-1.5 bg-rose-50/50 border border-rose-200 rounded-xl p-2.5">
+                            <div class="flex items-center justify-between text-[11px] font-black text-rose-900">
+                                <span><i class="fa-solid fa-video ml-1 text-rose-600"></i> فيديوهات جديدة</span>
+                                <span id="edit_rep_videos_count_badge" class="bg-rose-100 px-2 py-0.5 rounded-full">0</span>
+                            </div>
+                            <div id="edit_rep_videos_list" class="space-y-1.5"></div>
+                        </div>
+
+                        <!-- New Photos Preview -->
+                        <div id="edit_rep_photos_section" class="hidden space-y-1.5 bg-blue-50/50 border border-blue-200 rounded-xl p-2.5">
+                            <div class="flex items-center justify-between text-[11px] font-black text-blue-900">
+                                <span><i class="fa-solid fa-images ml-1 text-blue-600"></i> صور جديدة</span>
+                                <span id="edit_rep_photos_count_badge" class="bg-blue-100 px-2 py-0.5 rounded-full">0</span>
+                            </div>
+                            <div id="edit_rep_photos_grid" class="grid grid-cols-3 sm:grid-cols-4 gap-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Compression & Upload Progress Bar -->
+            <div id="edit_report_progress_wrap" class="hidden p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl space-y-2">
+                <div class="flex items-center justify-between text-xs font-bold text-indigo-900">
+                    <span id="edit_report_progress_label" class="flex items-center gap-1.5">
+                        <i class="fa-solid fa-spinner fa-spin text-indigo-600"></i>
+                        <span>جاري تجهيز وضغط الوسائط...</span>
+                    </span>
+                    <span id="edit_report_progress_pct" class="font-mono">0%</span>
+                </div>
+                <div class="w-full bg-indigo-200/70 h-2.5 rounded-full overflow-hidden">
+                    <div id="edit_report_progress_bar" class="h-full bg-indigo-600 rounded-full transition-all duration-200" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="flex items-center space-x-2 space-x-reverse pt-3 border-t border-slate-100">
+                <button type="submit" id="edit_report_submit_btn" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-5 rounded-xl shadow-md transition text-sm flex items-center justify-center">
+                    <i class="fa-solid fa-floppy-disk ml-1.5"></i>
+                    حفظ التعديلات والمرفقات
+                </button>
+                <button type="button" onclick="closeModal('edit-daily-report-modal')" class="bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold py-2.5 px-5 rounded-xl transition text-sm">
                     إلغاء
                 </button>
             </div>
@@ -3861,18 +4256,22 @@ function syncPct(val) {
     if (display) display.innerText = val + '%';
 }
 
-// --- Unified Drag & Drop & Media Analysis for Daily Site Reports ---
-let reportFilesList = []; // In-memory array of selected File objects
+// --- Unified Drag & Drop, Compression & Edit Media Manager for Daily Site Reports ---
+const reportMediaQueues = { add: [], edit: [] };
+let editReportDeletedIds = new Set();
+let editReportExistingMedia = [];
+let editReportLegacyVideo = '';
+let editReportDeleteLegacy = false;
 
 function isVideoFile(file) {
     if (file.type && file.type.startsWith('video/')) return true;
-    const ext = file.name.split('.').pop().toLowerCase();
+    const ext = (file.name || '').split('.').pop().toLowerCase();
     return ['mp4', 'mov', 'webm', 'mkv', 'avi', 'm4v', '3gp'].includes(ext);
 }
 
 function isImageFile(file) {
     if (file.type && file.type.startsWith('image/')) return true;
-    const ext = file.name.split('.').pop().toLowerCase();
+    const ext = (file.name || '').split('.').pop().toLowerCase();
     return ['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'svg'].includes(ext);
 }
 
@@ -3884,84 +4283,134 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
-function handleReportDragOver(e) {
+// Legacy wrappers for Add modal
+function handleReportDragOver(e) { handleMediaDragOver(e, 'report_dropzone'); }
+function handleReportDragLeave(e) { handleMediaDragLeave(e, 'report_dropzone'); }
+function handleReportDrop(e) { handleMediaDrop(e, 'add'); }
+function handleReportFilesSelected(files) { handleMediaSelected(files, 'add'); }
+
+function handleMediaDragOver(e, dropzoneId) {
     e.preventDefault();
     e.stopPropagation();
-    const dropzone = document.getElementById('report_dropzone');
-    if (dropzone) {
-        dropzone.classList.add('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
-    }
+    const dropzone = document.getElementById(dropzoneId);
+    if (dropzone) dropzone.classList.add('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
 }
 
-function handleReportDragLeave(e) {
+function handleMediaDragLeave(e, dropzoneId) {
     e.preventDefault();
     e.stopPropagation();
-    const dropzone = document.getElementById('report_dropzone');
-    if (dropzone) {
-        dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
-    }
+    const dropzone = document.getElementById(dropzoneId);
+    if (dropzone) dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
 }
 
-function handleReportDrop(e) {
+function handleMediaDrop(e, mode) {
     e.preventDefault();
     e.stopPropagation();
-    const dropzone = document.getElementById('report_dropzone');
-    if (dropzone) {
-        dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
-    }
+    const dzId = mode === 'edit' ? 'edit_report_dropzone' : 'report_dropzone';
+    const dropzone = document.getElementById(dzId);
+    if (dropzone) dropzone.classList.remove('border-indigo-600', 'bg-indigo-50/90', 'ring-4', 'ring-indigo-100');
     if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-        appendReportFiles(e.dataTransfer.files);
+        appendMediaToQueue(e.dataTransfer.files, mode);
     }
 }
 
-function handleReportFilesSelected(files) {
+function handleMediaSelected(files, mode) {
     if (files && files.length > 0) {
-        appendReportFiles(files);
+        appendMediaToQueue(files, mode);
     }
 }
 
-function appendReportFiles(fileList) {
+async function appendMediaToQueue(fileList, mode) {
+    const queue = reportMediaQueues[mode];
+    const newItems = [];
+
     Array.from(fileList).forEach(file => {
-        // Prevent duplicate file entries
-        const exists = reportFilesList.some(f => f.name === file.name && f.size === file.size && f.lastModified === file.lastModified);
+        if (!isImageFile(file) && !isVideoFile(file)) return;
+        const exists = queue.some(item => item.origName === file.name && item.origSize === file.size && item.lastModified === file.lastModified);
         if (!exists) {
-            reportFilesList.push(file);
+            const item = {
+                file: file,
+                origName: file.name,
+                origSize: file.size,
+                lastModified: file.lastModified,
+                compressed: false,
+                compressing: false,
+                progress: 0,
+                skipCompression: false
+            };
+            queue.push(item);
+            newItems.push(item);
         }
     });
-    syncReportInput();
-    renderReportMediaSections();
-}
 
-function removeReportFile(index) {
-    if (index >= 0 && index < reportFilesList.length) {
-        reportFilesList.splice(index, 1);
-        syncReportInput();
-        renderReportMediaSections();
+    renderMediaQueue(mode);
+
+    // Compress newly added items sequentially in background
+    for (const item of newItems) {
+        if (item.skipCompression) continue;
+        if (isImageFile(item.file) && item.origSize > 350 * 1024) {
+            item.compressing = true;
+            renderMediaQueue(mode);
+            try {
+                const compFile = await compressImageFile(item.file);
+                if (compFile && compFile.size < item.file.size) {
+                    item.file = compFile;
+                    item.compressed = true;
+                }
+            } catch (err) {
+                console.warn('Image compression skipped:', err);
+            }
+            item.compressing = false;
+            renderMediaQueue(mode);
+        } else if (isVideoFile(item.file) && item.origSize > 4 * 1024 * 1024) {
+            item.compressing = true;
+            renderMediaQueue(mode);
+            try {
+                const compVid = await compressVideoFile(item.file, (pct) => {
+                    item.progress = pct;
+                    const pctEl = document.getElementById(`${mode}_vid_prog_${item.lastModified}_${item.origSize}`);
+                    if (pctEl) pctEl.innerText = `جاري الضغط ${pct}%`;
+                }, () => item.skipCompression);
+                if (compVid && compVid.size < item.file.size) {
+                    item.file = compVid;
+                    item.compressed = true;
+                }
+            } catch (err) {
+                console.warn('Video compression fallback to original:', err);
+            }
+            item.compressing = false;
+            renderMediaQueue(mode);
+        }
     }
 }
 
-function syncReportInput() {
-    const input = document.getElementById('rep_media_input');
-    if (!input) return;
-    try {
-        const dt = new DataTransfer();
-        reportFilesList.forEach(file => dt.items.add(file));
-        input.files = dt.files;
-    } catch (e) {
-        console.warn('DataTransfer sync notice:', e);
+function skipVideoCompression(mode, index) {
+    const item = reportMediaQueues[mode][index];
+    if (item) {
+        item.skipCompression = true;
+        item.compressing = false;
+        renderMediaQueue(mode);
     }
 }
 
-function renderReportMediaSections() {
-    const videosSection = document.getElementById('rep_videos_section');
-    const videosList = document.getElementById('rep_videos_list');
-    const videosCountBadge = document.getElementById('rep_videos_count_badge');
+function removeMediaFromQueue(mode, index) {
+    const queue = reportMediaQueues[mode];
+    if (index >= 0 && index < queue.length) {
+        queue[index].skipCompression = true;
+        queue.splice(index, 1);
+        renderMediaQueue(mode);
+    }
+}
 
-    const photosSection = document.getElementById('rep_photos_section');
-    const photosGrid = document.getElementById('rep_photos_grid');
-    const photosCountBadge = document.getElementById('rep_photos_count_badge');
-
-    const summaryBadge = document.getElementById('rep_media_badge_summary');
+function renderMediaQueue(mode) {
+    const prefix = mode === 'edit' ? 'edit_rep' : 'rep';
+    const videosSection = document.getElementById(`${prefix}_videos_section`);
+    const videosList = document.getElementById(`${prefix}_videos_list`);
+    const videosCountBadge = document.getElementById(`${prefix}_videos_count_badge`);
+    const photosSection = document.getElementById(`${prefix}_photos_section`);
+    const photosGrid = document.getElementById(`${prefix}_photos_grid`);
+    const photosCountBadge = document.getElementById(`${prefix}_photos_count_badge`);
+    const summaryBadge = document.getElementById(`${prefix}_media_badge_summary`);
 
     if (!videosSection || !videosList || !photosSection || !photosGrid) return;
 
@@ -3971,31 +4420,43 @@ function renderReportMediaSections() {
     let videoCount = 0;
     let photoCount = 0;
 
-    reportFilesList.forEach((file, index) => {
+    reportMediaQueues[mode].forEach((item, index) => {
+        const file = item.file;
         if (isVideoFile(file)) {
             videoCount++;
             const card = document.createElement('div');
-            card.className = 'flex items-center justify-between p-2.5 rounded-xl bg-white border border-rose-200 shadow-2xs hover:shadow-xs transition';
+            card.className = 'flex items-center justify-between p-2.5 rounded-xl bg-white border border-rose-200 shadow-2xs';
+            let statusHtml = `<p class="text-[10px] text-slate-400 font-mono">${formatFileSize(file.size)} &bull; فيديو</p>`;
+            if (item.compressing) {
+                statusHtml = `
+                    <div class="flex items-center gap-2">
+                        <span id="${mode}_vid_prog_${item.lastModified}_${item.origSize}" class="text-[10px] font-bold text-indigo-600"><i class="fa-solid fa-spinner fa-spin ml-1"></i> جاري الضغط ${item.progress}%</span>
+                        <button type="button" onclick="skipVideoCompression('${mode}', ${index})" class="text-[9px] text-slate-500 underline hover:text-slate-800">تخطي</button>
+                    </div>
+                `;
+            } else if (item.compressed) {
+                statusHtml = `<p class="text-[10px] text-emerald-700 font-bold font-mono">تم الضغط: ${formatFileSize(item.origSize)} &larr; ${formatFileSize(file.size)}</p>`;
+            }
+
             card.innerHTML = `
                 <div class="flex items-center space-x-2 space-x-reverse min-w-0">
                     <div class="w-8 h-8 rounded-lg bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
                         <i class="fa-solid fa-film text-xs"></i>
                     </div>
                     <div class="min-w-0 pr-1">
-                        <p class="text-xs font-bold text-slate-800 truncate max-w-[170px]" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</p>
-                        <p class="text-[10px] text-slate-400 font-mono">${formatFileSize(file.size)} &bull; فيديو</p>
+                        <p class="text-xs font-bold text-slate-800 truncate max-w-[170px]" title="${escapeHtml(item.origName)}">${escapeHtml(item.origName)}</p>
+                        ${statusHtml}
                     </div>
                 </div>
-                <button type="button" onclick="removeReportFile(${index})" class="w-6 h-6 rounded-lg bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 flex items-center justify-center transition shrink-0" title="إزالة هذا الفيديو">
+                <button type="button" onclick="removeMediaFromQueue('${mode}', ${index})" class="w-6 h-6 rounded-lg bg-rose-50 hover:bg-rose-600 hover:text-white text-rose-600 flex items-center justify-center transition shrink-0" title="إزالة">
                     <i class="fa-solid fa-xmark text-xs"></i>
                 </button>
             `;
             videosList.appendChild(card);
         } else if (isImageFile(file)) {
             photoCount++;
-            const item = document.createElement('div');
-            item.className = 'group relative aspect-square rounded-xl overflow-hidden bg-white border border-blue-200 shadow-2xs';
-
+            const box = document.createElement('div');
+            box.className = 'group relative aspect-square rounded-xl overflow-hidden bg-white border border-blue-200 shadow-2xs';
             const img = document.createElement('img');
             img.className = 'w-full h-full object-cover';
             img.src = URL.createObjectURL(file);
@@ -4007,58 +4468,354 @@ function renderReportMediaSections() {
             const removeBtn = document.createElement('button');
             removeBtn.type = 'button';
             removeBtn.className = 'self-end w-5 h-5 rounded-md bg-rose-600 text-white flex items-center justify-center hover:bg-rose-700 shadow-xs text-[10px]';
-            removeBtn.title = 'إزالة هذه الصورة';
             removeBtn.innerHTML = '<i class="fa-solid fa-xmark"></i>';
-            removeBtn.onclick = (e) => {
-                e.stopPropagation();
-                removeReportFile(index);
-            };
+            removeBtn.onclick = (e) => { e.stopPropagation(); removeMediaFromQueue(mode, index); };
 
             const sizeBadge = document.createElement('span');
-            sizeBadge.className = 'text-[9px] text-white font-mono bg-black/60 px-1 py-0.5 rounded-md';
-            sizeBadge.textContent = formatFileSize(file.size);
+            sizeBadge.className = 'text-[9px] text-white font-mono bg-black/70 px-1 py-0.5 rounded-md';
+            sizeBadge.textContent = item.compressed ? `${formatFileSize(file.size)} ✓` : formatFileSize(file.size);
 
             overlay.appendChild(removeBtn);
             overlay.appendChild(sizeBadge);
-
-            item.appendChild(img);
-            item.appendChild(overlay);
-            photosGrid.appendChild(item);
+            box.appendChild(img);
+            box.appendChild(overlay);
+            photosGrid.appendChild(box);
         }
     });
 
-    // Toggle Videos Section
-    if (videoCount > 0) {
-        videosSection.classList.remove('hidden');
-        if (videosCountBadge) videosCountBadge.innerText = `${videoCount} فيديو`;
-    } else {
-        videosSection.classList.add('hidden');
-    }
+    videosSection.classList.toggle('hidden', videoCount === 0);
+    if (videosCountBadge) videosCountBadge.innerText = `${videoCount} فيديو`;
 
-    // Toggle Photos Section
-    if (photoCount > 0) {
-        photosSection.classList.remove('hidden');
-        if (photosCountBadge) photosCountBadge.innerText = `${photoCount} صورة`;
-    } else {
-        photosSection.classList.add('hidden');
-    }
+    photosSection.classList.toggle('hidden', photoCount === 0);
+    if (photosCountBadge) photosCountBadge.innerText = `${photoCount} صورة`;
 
-    // Toggle Summary Badge
     const totalCount = videoCount + photoCount;
     if (summaryBadge) {
-        if (totalCount > 0) {
-            summaryBadge.classList.remove('hidden');
-            summaryBadge.innerText = `تم تحليل: ${photoCount} صورة و ${videoCount} فيديو`;
-        } else {
-            summaryBadge.classList.add('hidden');
-        }
+        summaryBadge.classList.toggle('hidden', totalCount === 0);
+        if (totalCount > 0) summaryBadge.innerText = `${photoCount} صورة و ${videoCount} فيديو`;
     }
+}
+
+// Client-Side Image Compression (Max 1920px, JPEG 0.82)
+function compressImageFile(file) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+            URL.revokeObjectURL(url);
+            let w = img.width;
+            let h = img.height;
+            const maxDim = 1920;
+            if (w > maxDim || h > maxDim) {
+                if (w > h) { h = Math.round(h * (maxDim / w)); w = maxDim; }
+                else { w = Math.round(w * (maxDim / h)); h = maxDim; }
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, w, h);
+            canvas.toBlob((blob) => {
+                if (!blob) return reject('Blob failed');
+                const newName = file.name.replace(/\.[^/.]+$/, '') + '.jpg';
+                resolve(new File([blob], newName, { type: 'image/jpeg', lastModified: Date.now() }));
+            }, 'image/jpeg', 0.82);
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); reject('Image load error'); };
+        img.src = url;
+    });
+}
+
+// Client-Side Video Compression (Max 720p, ~1.2 Mbps via Canvas + MediaRecorder)
+function compressVideoFile(file, onProgress, shouldAbort) {
+    return new Promise((resolve, reject) => {
+        if (typeof MediaRecorder === 'undefined') return reject('MediaRecorder unsupported');
+
+        const mimeTypes = ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm', 'video/mp4'];
+        const chosenMime = mimeTypes.find(t => MediaRecorder.isTypeSupported(t));
+        if (!chosenMime) return reject('No supported video mime');
+
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = 'auto';
+        const url = URL.createObjectURL(file);
+        video.src = url;
+
+        video.onloadedmetadata = () => {
+            const duration = video.duration;
+            // For very long videos (> 90s), skip real-time transcoding to avoid waiting too long
+            if (!duration || !isFinite(duration) || duration > 90) {
+                URL.revokeObjectURL(url);
+                return resolve(file);
+            }
+
+            let vw = video.videoWidth || 1280;
+            let vh = video.videoHeight || 720;
+            const maxW = vw >= vh ? 1280 : 720;
+            const maxH = vw >= vh ? 720 : 1280;
+            if (vw > maxW || vh > maxH) {
+                const ratio = Math.min(maxW / vw, maxH / vh);
+                vw = Math.round(vw * ratio);
+                vh = Math.round(vh * ratio);
+            }
+            // Ensure even dimensions for encoders
+            vw = vw % 2 === 0 ? vw : vw - 1;
+            vh = vh % 2 === 0 ? vh : vh - 1;
+
+            const canvas = document.createElement('canvas');
+            canvas.width = vw;
+            canvas.height = vh;
+            const ctx = canvas.getContext('2d');
+
+            const canvasStream = canvas.captureStream(24);
+            // Try attaching audio if supported
+            try {
+                const vStream = video.captureStream ? video.captureStream() : (video.mozCaptureStream ? video.mozCaptureStream() : null);
+                if (vStream) {
+                    vStream.getAudioTracks().forEach(t => canvasStream.addTrack(t));
+                }
+            } catch (e) {}
+
+            const chunks = [];
+            let recorder;
+            try {
+                recorder = new MediaRecorder(canvasStream, { mimeType: chosenMime, videoBitsPerSecond: 1200000 });
+            } catch (e) {
+                URL.revokeObjectURL(url);
+                return resolve(file);
+            }
+
+            recorder.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0) chunks.push(e.data);
+            };
+
+            recorder.onstop = () => {
+                URL.revokeObjectURL(url);
+                if (shouldAbort && shouldAbort()) return resolve(file);
+                const ext = chosenMime.includes('mp4') ? 'mp4' : 'webm';
+                const blob = new Blob(chunks, { type: chosenMime.split(';')[0] });
+                const newName = file.name.replace(/\.[^/.]+$/, '') + '_compressed.' + ext;
+                resolve(new File([blob], newName, { type: blob.type, lastModified: Date.now() }));
+            };
+
+            recorder.start(250);
+            video.play().catch(() => {
+                recorder.stop();
+                resolve(file);
+            });
+
+            function drawFrame() {
+                if (shouldAbort && shouldAbort()) {
+                    video.pause();
+                    if (recorder.state === 'recording') recorder.stop();
+                    return;
+                }
+                if (video.paused || video.ended) {
+                    if (recorder.state === 'recording') recorder.stop();
+                    return;
+                }
+                ctx.drawImage(video, 0, 0, vw, vh);
+                if (onProgress && duration > 0) {
+                    onProgress(Math.min(99, Math.round((video.currentTime / duration) * 100)));
+                }
+                requestAnimationFrame(drawFrame);
+            }
+
+            video.onended = () => {
+                if (onProgress) onProgress(100);
+                if (recorder.state === 'recording') recorder.stop();
+            };
+            requestAnimationFrame(drawFrame);
+        };
+
+        video.onerror = () => {
+            URL.revokeObjectURL(url);
+            resolve(file);
+        };
+    });
+}
+
+// --- Edit Daily Report Modal Functions ---
+function openEditDailyReportModal(rep) {
+    document.getElementById('edit_rep_id').value = rep.id;
+    document.getElementById('edit_rep_title').value = rep.title || '';
+    document.getElementById('edit_rep_date').value = rep.report_date || '';
+    document.getElementById('edit_rep_period').value = rep.period_range || '';
+    document.getElementById('edit_rep_stage').value = rep.stage || '';
+    document.getElementById('edit_rep_pct').value = rep.completion_percentage || 0;
+    document.getElementById('edit_rep_desc').value = rep.description || '';
+    document.getElementById('edit_rep_video_url').value = rep.video_url || '';
+
+    editReportDeletedIds = new Set();
+    editReportExistingMedia = Array.isArray(rep.media) ? rep.media : [];
+    editReportLegacyVideo = rep.video_file || '';
+    editReportDeleteLegacy = false;
+    reportMediaQueues.edit = [];
+
+    renderEditExistingMedia();
+    renderMediaQueue('edit');
+    openModal('edit-daily-report-modal');
+}
+
+function toggleDeleteExistingReportMedia(mediaId) {
+    if (editReportDeletedIds.has(mediaId)) {
+        editReportDeletedIds.delete(mediaId);
+    } else {
+        editReportDeletedIds.add(mediaId);
+    }
+    renderEditExistingMedia();
+}
+
+function toggleDeleteLegacyReportVideo() {
+    editReportDeleteLegacy = !editReportDeleteLegacy;
+    document.getElementById('edit_rep_delete_legacy_video').value = editReportDeleteLegacy ? '1' : '0';
+    renderEditExistingMedia();
+}
+
+function renderEditExistingMedia() {
+    const grid = document.getElementById('edit_rep_existing_grid');
+    const emptyEl = document.getElementById('edit_rep_no_existing');
+    const countBadge = document.getElementById('edit_rep_existing_count_badge');
+    const delInputsWrap = document.getElementById('edit_rep_deleted_media_inputs');
+
+    if (!grid || !delInputsWrap) return;
+
+    delInputsWrap.innerHTML = '';
+    editReportDeletedIds.forEach(id => {
+        const inp = document.createElement('input');
+        inp.type = 'hidden';
+        inp.name = 'delete_media_ids[]';
+        inp.value = id;
+        delInputsWrap.appendChild(inp);
+    });
+
+    grid.innerHTML = '';
+    const hasLegacyOnly = editReportLegacyVideo && !editReportExistingMedia.some(m => m.file_path === editReportLegacyVideo);
+    const totalCount = editReportExistingMedia.length + (hasLegacyOnly ? 1 : 0);
+
+    if (countBadge) countBadge.innerText = totalCount;
+
+    if (totalCount === 0) {
+        grid.classList.add('hidden');
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        return;
+    }
+
+    grid.classList.remove('hidden');
+    if (emptyEl) emptyEl.classList.add('hidden');
+
+    editReportExistingMedia.forEach(m => {
+        const isDel = editReportDeletedIds.has(m.id);
+        const card = document.createElement('div');
+        card.className = `relative rounded-xl overflow-hidden border transition p-1 bg-white ${isDel ? 'border-rose-400 opacity-50 bg-rose-50' : 'border-slate-200'}`;
+
+        let mediaHtml = '';
+        if (m.file_type === 'video') {
+            mediaHtml = `<video src="${escapeHtml(m.file_path)}" class="w-full h-24 object-cover rounded-lg bg-black"></video><span class="absolute top-2 right-2 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">فيديو</span>`;
+        } else {
+            mediaHtml = `<img src="${escapeHtml(m.file_path)}" class="w-full h-24 object-cover rounded-lg">`;
+        }
+
+        card.innerHTML = `
+            ${mediaHtml}
+            <button type="button" onclick="toggleDeleteExistingReportMedia(${m.id})" class="mt-1 w-full py-1 rounded-lg text-[10px] font-bold transition ${isDel ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white'}">
+                ${isDel ? '<i class="fa-solid fa-rotate-left ml-1"></i> تراجع' : '<i class="fa-solid fa-trash-can ml-1"></i> حذف'}
+            </button>
+        `;
+        grid.appendChild(card);
+    });
+
+    if (hasLegacyOnly) {
+        const card = document.createElement('div');
+        card.className = `relative rounded-xl overflow-hidden border transition p-1 bg-white ${editReportDeleteLegacy ? 'border-rose-400 opacity-50 bg-rose-50' : 'border-slate-200'}`;
+        card.innerHTML = `
+            <video src="${escapeHtml(editReportLegacyVideo)}" class="w-full h-24 object-cover rounded-lg bg-black"></video>
+            <span class="absolute top-2 right-2 bg-black/70 text-white text-[9px] px-1.5 py-0.5 rounded font-bold">فيديو</span>
+            <button type="button" onclick="toggleDeleteLegacyReportVideo()" class="mt-1 w-full py-1 rounded-lg text-[10px] font-bold transition ${editReportDeleteLegacy ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-rose-50 text-rose-600 hover:bg-rose-600 hover:text-white'}">
+                ${editReportDeleteLegacy ? '<i class="fa-solid fa-rotate-left ml-1"></i> تراجع' : '<i class="fa-solid fa-trash-can ml-1"></i> حذف'}
+            </button>
+        `;
+        grid.appendChild(card);
+    }
+}
+
+// --- Submit Form via XHR with Live Progress Bar ---
+function handleReportFormSubmit(e, mode) {
+    e.preventDefault();
+    const form = e.target;
+    const queue = reportMediaQueues[mode];
+
+    // Check if any file is still compressing
+    if (queue.some(item => item.compressing)) {
+        alert('جاري ضغط الفيديو حالياً لتخفيف الحجم... انتظر لحظة أو اضغط "تخطي" بجانب الفيديو.');
+        return false;
+    }
+
+    const progWrap = document.getElementById(`${mode}_report_progress_wrap`);
+    const progLabel = document.getElementById(`${mode}_report_progress_label`);
+    const progPct = document.getElementById(`${mode}_report_progress_pct`);
+    const progBar = document.getElementById(`${mode}_report_progress_bar`);
+    const submitBtn = document.getElementById(`${mode}_report_submit_btn`);
+
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+    }
+    if (progWrap) progWrap.classList.remove('hidden');
+
+    const formData = new FormData(form);
+    formData.delete('report_media[]');
+    formData.append('ajax_upload', '1');
+    queue.forEach(item => {
+        formData.append('report_media[]', item.file, item.file.name);
+    });
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', form.getAttribute('action'), true);
+
+    xhr.upload.onprogress = function(ev) {
+        if (ev.lengthComputable) {
+            const pct = Math.round((ev.loaded / ev.total) * 100);
+            if (progLabel) progLabel.innerHTML = `<i class="fa-solid fa-cloud-arrow-up text-indigo-600"></i> <span>جاري رفع الصور والفيديوهات...</span>`;
+            if (progPct) progPct.innerText = pct + '%';
+            if (progBar) progBar.style.width = pct + '%';
+        }
+    };
+
+    xhr.onload = function() {
+        try {
+            const res = JSON.parse(xhr.responseText);
+            if (res.success && res.redirect) {
+                window.location.href = res.redirect;
+                return;
+            }
+            alert(res.error || 'حدث خطأ أثناء حفظ التقرير.');
+        } catch (err) {
+            window.location.reload();
+        }
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+    };
+
+    xhr.onerror = function() {
+        alert('تعذر الاتصال بالسيرفر أثناء الرفع. تأكد من الاتصال بالإنترنت.');
+        if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+    };
+
+    xhr.send(formData);
+    return false;
 }
 
 // Fallback for legacy calls if any
 function previewReportPhotos(input) {
     if (input && input.files) {
-        handleReportFilesSelected(input.files);
+        handleMediaSelected(input.files, 'add');
     }
 }
 
