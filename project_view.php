@@ -2345,6 +2345,14 @@ require_once __DIR__ . '/includes/header.php';
                     <i class="fa-solid fa-plus ml-1.5"></i>
                     إضافة تقرير موقع جديد
                 </button>
+                <a href="video_montage.php?project_id=<?= $projectId ?>&days=7" class="inline-flex items-center bg-gradient-to-r from-purple-600 to-indigo-600 hover:opacity-95 text-white font-bold px-3.5 py-2.5 rounded-xl shadow-md shadow-purple-600/20 transition text-xs" title="تجميع صور وفيديوهات تقارير آخر 7 أيام ومونتاجها تلقائياً">
+                    <i class="fa-solid fa-clapperboard ml-1.5"></i>
+                    مونتاج آخر 7 أيام
+                </a>
+                <a href="video_montage.php?project_id=<?= $projectId ?>&days=all" class="inline-flex items-center bg-purple-50 hover:bg-purple-100 text-purple-800 font-bold px-3 py-2.5 rounded-xl border border-purple-200 transition text-xs" title="مونتاج جميع صور وفيديوهات المشروع">
+                    <i class="fa-solid fa-film ml-1.5"></i>
+                    مونتاج كل التقارير
+                </a>
                 <a href="project_report_share.php?token=<?= htmlspecialchars($project['share_token'] ?? '') ?>&tab=reports" target="_blank" class="inline-flex items-center bg-indigo-50 hover:bg-indigo-100 text-indigo-800 font-bold px-3.5 py-2.5 rounded-xl border border-indigo-200 transition text-xs" title="معاينة شاشة تقارير العميل">
                     <i class="fa-solid fa-share-nodes ml-1.5"></i>
                     شاشة العميل للتقارير

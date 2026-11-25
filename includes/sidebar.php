@@ -176,6 +176,11 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                     <i class="fa-solid fa-newspaper w-6 text-center ml-2.5 <?= in_array($currentPage, ['social_posts.php', 'social_drafts.php', 'social_history.php', 'social_settings.php']) ? 'text-white' : 'text-emerald-400' ?>"></i>
                     <span>المنشورات والعمليات</span>
                 </a>
+
+                <a href="video_montage.php" class="flex items-center px-3.5 py-2.5 text-sm font-semibold rounded-xl transition <?= $currentPage === 'video_montage.php' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-300 hover:bg-slate-800/80 hover:text-white' ?>">
+                    <i class="fa-solid fa-clapperboard w-6 text-center ml-2.5 <?= $currentPage === 'video_montage.php' ? 'text-white' : 'text-rose-400' ?>"></i>
+                    <span>استوديو المونتاج التلقائي</span>
+                </a>
             <?php endif; ?>
 
             <?php if (isCompanyAdmin()): ?>
@@ -340,6 +345,9 @@ $isSuperMaster = isSuperAdmin() && empty($currentUser['active_company_id']);
                     </a>
                     <a href="social_posts.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= in_array($currentPage, ['social_posts.php', 'social_drafts.php', 'social_history.php', 'social_settings.php']) ? 'bg-purple-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
                         <i class="fa-solid fa-newspaper ml-3 w-5 text-center text-emerald-400"></i> المنشورات والعمليات
+                    </a>
+                    <a href="video_montage.php" onclick="closeMobileSidebar()" class="flex items-center px-3 py-2.5 text-sm rounded-lg <?= $currentPage === 'video_montage.php' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-300 hover:bg-slate-800' ?>">
+                        <i class="fa-solid fa-clapperboard ml-3 w-5 text-center text-rose-400"></i> استوديو المونتاج التلقائي
                     </a>
                 <?php endif; ?>
                 <?php if (isCompanyAdmin()): ?>

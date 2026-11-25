@@ -123,6 +123,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 $initialCaption = $editingPost['caption'] ?? '';
 $initialTargets = array_column($editingPost['targets'] ?? [], 'social_account_id');
 $initialMedia = $editingPost['media'] ?? [];
+if (empty($initialMedia) && !empty($_GET['media_id'])) {
+    $preMediaId = (int)$_GET['media_id'];
+    $pmStmt = getDBConnection()->prepare("SELECT * FROM social_media_files WHERE id = :mid AND tenant_id = :tid LIMIT 1");
+    $pmStmt->execute([':mid' => $preMediaId, ':tid' => $activeCompanyId]);
+    $pmRow = $pmStmt->fetch(PDO::FETCH_ASSOC);
+    if ($pmRow) {
+        $initialMedia = [$pmRow];
+    }
+}
 $initialPlatformCaps = $editingPost['platform_captions'] ?? [];
 $initialScheduledAt = $editingPost['scheduled_at'] ?? '';
 $initialDate = $initialScheduledAt ? date('Y-m-d', strtotime($initialScheduledAt)) : date('Y-m-d');

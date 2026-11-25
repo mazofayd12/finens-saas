@@ -713,6 +713,21 @@ function ensureDatabaseTablesExist(): void {
         CREATE INDEX IF NOT EXISTS idx_ss_tenant_key ON social_settings(tenant_id, setting_key);
     ");
 
+    // 7. Video Montage Studio Frames (Multi-Tenant Custom PNG Frame Overlays)
+    $db->exec("
+        CREATE TABLE IF NOT EXISTS montage_frames (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tenant_id INTEGER NOT NULL,
+            name VARCHAR(150) NOT NULL,
+            file_path VARCHAR(255) NOT NULL,
+            aspect_ratio VARCHAR(20) DEFAULT '9:16',
+            is_default INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (tenant_id) REFERENCES companies(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_mf_tenant ON montage_frames(tenant_id);
+    ");
+
     // Seed data if no users exist
     $checkUser = $db->query("SELECT COUNT(*) as cnt FROM users")->fetch();
     if ($checkUser && (int)$checkUser['cnt'] === 0) {
